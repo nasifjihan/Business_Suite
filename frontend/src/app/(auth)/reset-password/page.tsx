@@ -134,7 +134,6 @@ function Inner() {
         <form onSubmit={handleSubmit(submit)} noValidate className="space-y-5">
           <PasswordField
             label="New password"
-            name="newPassword"
             placeholder="New password"
             required
             autoComplete="new-password"
@@ -145,7 +144,6 @@ function Inner() {
 
           <PasswordField
             label="Confirm new password"
-            name="confirmPassword"
             placeholder="Type it again"
             required
             autoComplete="new-password"

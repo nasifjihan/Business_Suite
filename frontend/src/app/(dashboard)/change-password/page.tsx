@@ -146,7 +146,6 @@ export default function ChangePasswordPage() {
         <form onSubmit={handleSubmit(submit)} noValidate className="space-y-5">
           <PasswordField
             label="Current password"
-            name="currentPassword"
             required
             autoComplete="current-password"
             error={errors.currentPassword?.message}
@@ -155,7 +154,6 @@ export default function ChangePasswordPage() {
 
           <PasswordField
             label="New password"
-            name="newPassword"
             required
             autoComplete="new-password"
             showStrengthMeter
@@ -165,7 +163,6 @@ export default function ChangePasswordPage() {
 
           <PasswordField
             label="Confirm new password"
-            name="confirmPassword"
             required
             autoComplete="new-password"
             error={errors.confirmPassword?.message}

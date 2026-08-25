@@ -18,10 +18,8 @@ export default function StoreProvider({ children }: { children: ReactNode }) {
   const storeRef = useRef<AppStore | null>(null);
   if (!storeRef.current) {
     storeRef.current = makeStore();
-    // Prime the apiSlice reducer once (RTK injectEndpoints listeners)
-    if ((storeRef.current as AppStore)[apiSlice.reducerPath] !== undefined) {
-      // Already mounted by makeStore above.
-    }
+    // apiSlice reducer already mounted by makeStore() via [apiSlice.reducerPath]
+    void apiSlice;
   }
   return <Provider store={storeRef.current}>{children}</Provider>;
 }

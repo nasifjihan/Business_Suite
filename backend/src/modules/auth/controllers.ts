@@ -30,9 +30,14 @@ export const AuthController = {
 
   async refresh(req: Request, res: Response) {
     const cookie = req.cookies?.[REFRESH_COOKIE_NAME] as string | undefined;
-    const { response, newRefreshJwt } = await AuthService.refresh(cookie, extractMeta(req));
-    res.cookie(REFRESH_COOKIE_NAME, newRefreshJwt, buildRefreshCookieOptions());
-    return successResponse(res, response, 200);
+    try {
+      const { response, newRefreshJwt } = await AuthService.refresh(cookie, extractMeta(req));
+      res.cookie(REFRESH_COOKIE_NAME, newRefreshJwt, buildRefreshCookieOptions());
+      return successResponse(res, response, 200);
+    } catch (err) {
+      res.cookie(REFRESH_COOKIE_NAME, "", CLEAR_REFRESH_COOKIE_OPTIONS);
+      throw err;
+    }
   },
 
   async logout(req: Request, res: Response) {

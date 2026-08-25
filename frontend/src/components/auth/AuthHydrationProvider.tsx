@@ -104,25 +104,6 @@ function useHydrateAuth() {
     }
   }, [dispatch, meRes.currentData]);
 
-  // 3. Redirects based on auth:
-  //   - Not logged in but on dashboard path → /login
-  //   - Logged in + on /login page → /dashboard
-  useEffect(() => {
-    if (hydrating) return;
-    const authed = useAppSelector.getState
-      ? // Fallback via dispatch context window state (avoid circular call)
-        (() => {
-          const stored = (globalThis as unknown as { __BS_AUTH_STATE__?: boolean }).__BS_AUTH_STATE__;
-          if (typeof stored === "boolean") return stored;
-          return false;
-        })()
-      : false;
-    // (We'll simply check via selector inline in component below.)
-    void pathname;
-    void router;
-    void authed;
-  }, [hydrating, pathname, router]);
-
   return { hydrating };
 }
 
@@ -140,6 +121,18 @@ export default function AuthHydrationProvider({ children }: { children: ReactNod
   // ─────────────────────────────────────────────────────────────────────
   // Phase 2: Auth hydrate runs ONCE on first client mount.
   useEffect(() => {
+    // Skip silent refresh on public auth pages — the user hasn't logged in yet.
+    // This avoids spurious 401s (and noisy backend logs) when loading
+    // /login, /forgot-password, or /reset-password with no valid cookie.
+    const onPublicAuth =
+      pathname === "/login" ||
+      pathname === "/forgot-password" ||
+      pathname === "/reset-password";
+    if (onPublicAuth) {
+      dispatch(setHydratedUser(null));
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {

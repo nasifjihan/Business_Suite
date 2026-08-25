@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
@@ -9,7 +10,6 @@ import {
   Building2,
   ChevronLeft,
   ChevronRight,
-  DashboardIcon,
   LayoutDashboard,
   LogOut,
   Settings,
@@ -18,6 +18,9 @@ import {
   UserCog,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { clearCredentials } from "@/store/slices/authSlice";
+import { useLogoutMutation } from "@/lib/api/authEndpoints";
 
 type NavItem = {
   href: string;
@@ -43,6 +46,27 @@ export default function DashboardLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const [collapsed, setCollapsed] = useState(false);
+  const router = useRouter();
+  const dispatch = useAppDispatch();
+  const [logoutTrigger] = useLogoutMutation();
+  const user = useAppSelector((s) => s.auth.user);
+
+  const handleLogout = async () => {
+    try {
+      await logoutTrigger().unwrap();
+    } catch {
+    } finally {
+      dispatch(clearCredentials());
+      router.replace("/login");
+    }
+  };
+
+  const initials = user
+    ? `${user.firstName?.[0] ?? ""}${user.lastName?.[0] ?? ""}`.toUpperCase() || "U"
+    : "G";
+  const fullName = user
+    ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.email
+    : "Guest";
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
@@ -85,11 +109,12 @@ export default function DashboardLayout({
         </nav>
         <div className="border-t border-border p-2">
           <button
-            className="w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            title="Sign out (Phase 3)"
-            disabled
+            type="button"
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 transition-colors"
+            title="Sign out"
           >
-            <LogOut className="w-5 h-5 shrink-0 text-slate-500" />
+            <LogOut className="w-5 h-5 shrink-0" />
             {!collapsed && <span>Sign out</span>}
           </button>
           <Button
@@ -111,15 +136,14 @@ export default function DashboardLayout({
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-16 flex items-center justify-between border-b border-border bg-card/80 backdrop-blur px-6">
           <div className="flex items-center gap-2 text-sm text-muted">
-            <DashboardIcon className="w-4 h-4" />
+            <LayoutDashboard className="w-4 h-4" />
             <span className="font-medium text-foreground">Dashboard</span>
           </div>
           <div className="flex items-center gap-2 text-sm text-muted">
-            {/* Phase 3 will replace with proper user avatar dropdown menu */}
             <div className="rounded-full bg-primary/10 text-primary h-8 w-8 flex items-center justify-center font-semibold text-xs border border-primary/20">
-              NJ
+              {initials}
             </div>
-            <span className="hidden md:inline">Nasif Jihan</span>
+            <span className="hidden md:inline">{fullName}</span>
           </div>
         </header>
         <main className="flex-1 p-6 overflow-x-auto">{children}</main>

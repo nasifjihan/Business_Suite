@@ -111,11 +111,11 @@ export default function LoginForm() {
     if (fe) return fe;
     if (!rtkError) return undefined;
     // RTK wraps errors as FetchBaseQueryError: { status, data } where data = our envelope.
-    const status = rtkError.status;
-    if (status === 429) {
+    const status = (rtkError as { status?: number | string }).status;
+    if (status === 429 || status === "429") {
       return "Too many failed attempts. Please try again in 15 minutes.";
     }
-    if (status === 403) {
+    if (status === 403 || status === "403") {
       return "This account has been disabled. Contact your administrator.";
     }
     const errData = (rtkError as { data?: { error?: { message?: string; code?: string } } }).data?.error;
@@ -209,7 +209,6 @@ export default function LoginForm() {
 
       <PasswordField
         label="Password"
-        name="password"
         autoComplete="current-password"
         placeholder="Enter your password"
         required
