@@ -33,6 +33,7 @@ export interface AuthUser {
 export interface AuthState {
   user: AuthUser | null;
   accessToken: string | null;
+  permissions: string[];
   isAuthenticated: boolean;
   loading: boolean;          // Login/logout/refresh in progress
   hydrating: boolean;        // True while /auth/me hydration runs on first mount
@@ -42,6 +43,7 @@ export interface AuthState {
 const initialState: AuthState = {
   user: null,
   accessToken: null,
+  permissions: [],
   isAuthenticated: false,
   loading: false,
   hydrating: true,
@@ -55,20 +57,29 @@ const authSlice = createSlice({
     /** Called after login OR refresh success. accessToken short-lived. */
     setCredentials(
       state,
-      action: PayloadAction<{ accessToken: string; user: AuthUser }>
+      action: PayloadAction<{
+        accessToken: string;
+        user: AuthUser;
+        permissions?: string[];
+      }>,
     ) {
       state.accessToken = action.payload.accessToken;
       state.user = action.payload.user;
+      state.permissions = action.payload.permissions ?? state.permissions;
       state.isAuthenticated = true;
       state.forceChangePassword = action.payload.user.mustChangePassword;
       state.loading = false;
       state.hydrating = false;
     },
     /** Used after /auth/me (page refresh hydrate) — we may or may not get user back. */
-    setHydratedUser(state, action: PayloadAction<AuthUser | null>) {
-      state.user = action.payload;
-      state.isAuthenticated = action.payload !== null;
-      state.forceChangePassword = action.payload?.mustChangePassword ?? false;
+    setHydratedUser(
+      state,
+      action: PayloadAction<{ user: AuthUser | null; permissions?: string[] }>,
+    ) {
+      state.user = action.payload.user;
+      state.permissions = action.payload.permissions ?? state.permissions;
+      state.isAuthenticated = action.payload.user !== null;
+      state.forceChangePassword = action.payload.user?.mustChangePassword ?? false;
       state.hydrating = false;
     },
     /** baseQueryWithReauth updates only the access token after a transparent refresh. */
@@ -84,10 +95,14 @@ const authSlice = createSlice({
     setForceChangePassword(state, action: PayloadAction<boolean>) {
       state.forceChangePassword = action.payload;
     },
+    setPermissions(state, action: PayloadAction<string[]>) {
+      state.permissions = action.payload;
+    },
     /** Logout: wipe EVERYTHING. Backend clears the cookie separately; this is UX cleanup. */
     clearCredentials(state) {
       state.user = null;
       state.accessToken = null;
+      state.permissions = [];
       state.isAuthenticated = false;
       state.loading = false;
       state.hydrating = false;
@@ -103,6 +118,7 @@ export const {
   setLoading,
   setHydrating,
   setForceChangePassword,
+  setPermissions,
   clearCredentials,
 } = authSlice.actions;
 

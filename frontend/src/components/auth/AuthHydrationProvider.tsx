@@ -170,14 +170,19 @@ export default function AuthHydrationProvider({ children }: { children: ReactNod
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When /me returns, populate real user object.
+  // When /me returns, populate real user object + permissions.
   useEffect(() => {
     if (meRes.currentData?.success && meRes.currentData.data) {
-      const u = meRes.currentData.data;
+      const d = meRes.currentData.data;
+      const u = d.user;
+      const perms = d.permissions ?? [];
       dispatch(
         setHydratedUser({
-          ...u,
-          fullName: `${u.firstName} ${u.lastName}`.trim(),
+          user: {
+            ...u,
+            fullName: `${u.firstName} ${u.lastName}`.trim(),
+          },
+          permissions: perms,
         })
       );
     } else if (

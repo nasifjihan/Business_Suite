@@ -1,19 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Activity,
   Boxes,
   Building2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  FileText,
   LayoutDashboard,
+  Lock,
   LogOut,
   Settings,
+  Shield,
   ShoppingCart,
+  UserCircle,
   Users,
   UserCog,
 } from "lucide-react";
@@ -21,23 +26,32 @@ import { Button } from "@/components/ui/button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearCredentials } from "@/store/slices/authSlice";
 import { useLogoutMutation } from "@/lib/api/authEndpoints";
+import { PermissionGate, useHasPermission } from "@/components/auth/PermissionGate";
 
 type NavItem = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: string;
+  /** Match ALL these permission codes, OR use permissionCode string for single. */
+  requires?: { all?: string[]; any?: string[] } | string;
 };
 
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/health-test", label: "Connectivity Test", icon: Activity, badge: "Phase 1" },
-  { href: "/crm", label: "CRM", icon: Users },
-  { href: "/inventory", label: "Inventory", icon: Boxes },
-  { href: "/pos", label: "POS", icon: ShoppingCart },
-  { href: "/sales", label: "Sales", icon: ShoppingCart },
-  { href: "/hrm", label: "HRM", icon: UserCog },
-  { href: "/admin", label: "Admin", icon: Settings },
+  { href: "/crm", label: "CRM", icon: Users, requires: { any: ["customers.read", "leads.read"] } },
+  { href: "/inventory", label: "Inventory", icon: Boxes, requires: { any: ["products.read", "stock.read", "categories.read", "warehouses.read"] } },
+  { href: "/pos", label: "POS", icon: ShoppingCart, requires: "pos.use" },
+  { href: "/sales", label: "Sales", icon: ShoppingCart, requires: { any: ["orders.read", "payments.read"] } },
+  { href: "/hrm", label: "HRM", icon: UserCog, requires: { any: ["employees.read", "attendance.read", "leave.read"] } },
+];
+
+type SubNavItem = NavItem & {};
+const ADMIN_SUBNAV: SubNavItem[] = [
+  { href: "/administration/users", label: "Users", icon: Users, requires: "users.read" },
+  { href: "/administration/roles", label: "Roles & Permissions", icon: Shield, requires: "roles.read" },
+  { href: "/administration/audit-log", label: "Audit Log", icon: FileText, requires: "audit.read" },
 ];
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Business Suite";
@@ -46,10 +60,15 @@ export default function DashboardLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const [collapsed, setCollapsed] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname() ?? "";
   const dispatch = useAppDispatch();
   const [logoutTrigger] = useLogoutMutation();
   const user = useAppSelector((s) => s.auth.user);
+
+  const hasAnyAdmin = useHasPermission({ any: ["users.read", "roles.read", "audit.read"] });
 
   const handleLogout = async () => {
     try {
@@ -83,30 +102,88 @@ export default function DashboardLayout({
             <span className="ml-2 font-semibold tracking-tight truncate">{appName}</span>
           )}
         </div>
-        <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
+
+        <nav className="flex-1 py-3 px-2 space-y-1 overflow-y-auto">
           {NAV.map((it) => (
-            <Link
+            <PermissionGate
               key={it.href}
-              href={it.href}
-              className={cn(
-                "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              )}
+              {...(it.requires
+                ? typeof it.requires === "string"
+                  ? { one: it.requires }
+                  : it.requires)
+                : { one: "*" }}
             >
-              <it.icon className={cn("w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary")} />
-              {!collapsed && (
-                <>
-                  <span className="flex-1 truncate">{it.label}</span>
-                  {it.badge && (
-                    <span className="text-[10px] rounded-full bg-primary/10 text-primary px-1.5 py-0.5 border border-primary/20">
-                      {it.badge}
-                    </span>
-                  )}
-                </>
-              )}
-            </Link>
+              <Link
+                href={it.href}
+                className={cn(
+                  "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+                  pathname === it.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                )}
+              >
+                <it.icon className={cn("w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary")} />
+                {!collapsed && (
+                  <>
+                    <span className="flex-1 truncate">{it.label}</span>
+                    {it.badge && (
+                      <span className="text-[10px] rounded-full bg-primary/10 text-primary px-1.5 py-0.5 border border-primary/20">
+                        {it.badge}
+                      </span>
+                    )}
+                  </>
+                )}
+              </Link>
+            </PermissionGate>
           ))}
+
+          {/* Administration drawer — shown only if user has any of users/roles/audit permissions */}
+          {hasAnyAdmin && (
+            <>
+              {!collapsed ? (
+                <button
+                  type="button"
+                  className="mt-4 w-full group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  onClick={() => setAdminOpen((v) => !v)}
+                >
+                  <Settings className="w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary" />
+                  <span className="flex-1 truncate text-left">Administration</span>
+                  <ChevronDown
+                    className={cn(
+                      "w-4 h-4 text-slate-400 transition-transform",
+                      adminOpen && "rotate-180"
+                    )}
+                  />
+                </button>
+              ) : (
+                <div className="mt-4 h-6 flex items-center justify-center text-[10px] text-slate-400">
+                  Adm
+                </div>
+              )}
+              {adminOpen &&
+                ADMIN_SUBNAV.map((sub) => (
+                  <PermissionGate
+                    key={sub.href}
+                    {...(typeof sub.requires === "string"
+                      ? { one: sub.requires }
+                      : sub.requires ?? { one: "*" })}
+                  >
+                    <Link
+                      href={sub.href}
+                      className={cn(
+                        "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                        collapsed ? "justify-center" : "pl-9",
+                        pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                      )}
+                    >
+                      <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
+                      {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
+                    </Link>
+                  </PermissionGate>
+                ))}
+            </>
+          )}
         </nav>
+
         <div className="border-t border-border p-2">
           <button
             type="button"
@@ -139,11 +216,54 @@ export default function DashboardLayout({
             <LayoutDashboard className="w-4 h-4" />
             <span className="font-medium text-foreground">Dashboard</span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <div className="rounded-full bg-primary/10 text-primary h-8 w-8 flex items-center justify-center font-semibold text-xs border border-primary/20">
-              {initials}
-            </div>
-            <span className="hidden md:inline">{fullName}</span>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+              className="flex items-center gap-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 pr-2 pl-1 py-1 transition-colors"
+            >
+              <div className="rounded-full bg-primary/10 text-primary h-8 w-8 flex items-center justify-center font-semibold text-xs border border-primary/20">
+                {initials}
+              </div>
+              <span className="hidden md:inline text-sm">{fullName}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+
+            {menuOpen && (
+              <div className="absolute right-0 mt-2 w-56 z-30 rounded-xl border border-border bg-popover shadow-lg overflow-hidden text-sm">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="font-medium text-foreground">{fullName}</p>
+                  {user && <p className="text-xs text-muted-foreground truncate">{user.email}</p>}
+                </div>
+                <Link
+                  href="/profile"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200"
+                >
+                  <UserCircle className="w-4 h-4" /> My Profile
+                </Link>
+                <PermissionGate one="users.update">
+                  <Link
+                    href="/administration/users"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-2 px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200"
+                  >
+                    <Lock className="w-4 h-4" /> Administration
+                  </Link>
+                </PermissionGate>
+                <div className="border-t border-border">
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2 px-4 py-2 hover:bg-red-50 dark:hover:bg-red-950/30 text-rose-600 dark:text-rose-400"
+                  >
+                    <LogOut className="w-4 h-4" /> Sign out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </header>
         <main className="flex-1 p-6 overflow-x-auto">{children}</main>

@@ -6,7 +6,8 @@
  *   useLogoutMutation          → POST /auth/logout (clears cookie + Redux)
  *   useForgotPasswordMutation  → POST /auth/forgot-password
  *   useResetPasswordMutation   → POST /auth/reset-password
- *   useMeQuery                 → GET  /auth/me (hydrate Redux on page reload)
+ *   useChangePasswordMutation  → POST /auth/change-password
+ *   useMeQuery                 → GET  /auth/me (hydrate Redux on page reload, returns user + permissions[])
  */
 import type { AuthUser } from "@/store/slices/authSlice";
 import { apiSlice } from "./apiSlice";
@@ -43,6 +44,11 @@ type ApiSuccess<T> = { success: true; data: T };
 export interface ChangePasswordRequest {
   currentPassword: string;
   newPassword: string;
+}
+
+export interface MeResponseData {
+  user: AuthUser;
+  permissions: string[];
 }
 
 export const authApi = apiSlice.injectEndpoints({
@@ -95,11 +101,12 @@ export const authApi = apiSlice.injectEndpoints({
       }),
     }),
 
-    me: builder.query<ApiSuccess<AuthUser>, void>({
+    me: builder.query<ApiSuccess<MeResponseData>, void>({
       query: () => ({
         url: "/auth/me",
         method: "GET",
       }),
+      providesTags: ["me"],
     }),
   }),
   overrideExisting: false,

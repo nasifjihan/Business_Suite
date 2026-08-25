@@ -285,45 +285,195 @@ docs/learning-notes.md
 
 ## 5. PHASE 2 — Authentication & Token Refresh
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ COMPLETED
 
-**Objective**: Full production-grade auth flow. Short-lived access tokens in memory/headers, long-lived refresh tokens in HTTP-only Secure cookies with rotation, password hashing, rate limiting on login.
+**Objective**: Full production-grade auth flow. Short-lived access tokens in Redux memory, long-lived refresh tokens in HTTP-only Secure cookies with **token rotation + reuse detection (family revocation)**, password hashing, anti-enumeration protections, rate limiting on auth endpoints, forgot/reset/change password flow, and transparent client-side 401 refresh-with-retry using RTK Query + async-mutex.
 
-### Core Concepts
-- **Access Token**: JWT, 15-minute TTL, sent in `Authorization: Bearer <token>` header. Short TTL limits damage if stolen.
-- **Refresh Token**: Random 64-byte string (NOT a JWT), 7-day TTL, stored in DB as SHA-256 hash (not plaintext), sent to browser via `Set-Cookie` with `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/api/v1/auth/refresh`. JavaScript on the page CANNOT read this cookie.
-- **Token Rotation**: Every time `/auth/refresh` is called, the old refresh token is revoked (marked revokedAt in DB) and a NEW one is issued. This prevents replay of stolen refresh tokens.
-- **Authorization Code Flow**: Not used (that's OAuth2); we use direct credential POST.
-- **Rate Limiting**: Login endpoint: 5 attempts per IP per 15 minutes. Prevents brute force.
-- **Password Hashing**: bcrypt with cost factor 12. Not Argon2 (bcrypt is sufficient and has fewer native compilation issues on Windows).
+### Actual Implementation Steps (vs. original template above)
 
-### Backend Auth Module
-- `src/modules/auth/validators.ts` — Zod schemas: `loginSchema` (email+password), `forgotSchema`, `resetSchema`
-- `src/modules/auth/services.ts` — `AuthService` class with methods: `login()`, `refreshToken()`, `logout()`, `me()`, `forgotPassword()`, `resetPassword()`, `generateTokens()`, `hashRefreshToken()`, `verifyPassword()`, `hashPassword()`
-- `src/modules/auth/controllers.ts` — Thin controllers that call AuthService and return responses
-- `src/modules/auth/routes.ts` — POST /login, POST /refresh, POST /logout, GET /me, POST /forgot-password, POST /reset-password
-- `src/middleware/auth.ts` — `authenticate()` middleware. Extracts Bearer token from Authorization header, verifies JWT signature+expiry, attaches `req.user` object (id, email, roleId, permissions[]). Returns 401 if invalid/expired.
-- RTK Query client-side: Base query with auto-reauth on 401 — if an API call returns 401, it calls `/auth/refresh` once to get a new access token, then retries the original request. If refresh also fails → user is logged out.
+### 5.1 Prisma Migration — Auth Additions
+1. Created migration `20260825105752_add_auth_rotation_password_reset`:
+   - **New enum**: `RoleType = SUPER_ADMIN | ADMIN | MANAGER | SALES | CASHIER | HR | VIEWER` (7 roles total; SUPER_ADMIN added to template's original 6 because we needed an owner-above-admin tier for seed)
+   - **New model `Role`**: `(id, name @unique @db.VarChar(50), description?, isSystem Boolean @default(false), isActive Boolean @default(true), createdAt, updatedAt)`
+   - **New model `PasswordResetToken`**: `(id UUID PK, tokenHash @unique, userId FK User, expiresAt, usedAt?, createdAt, CONSTRAINT password_reset_pkey PK(id))`
+   - **Augmented `User` model**: `role` String @default(VIEWER) → replaced with `roleId UUID? FK Role.id`, added `role Role?` relation, added `mustChangePassword Boolean @default(true)`, added `status UserStatus @default(ACTIVE)`
+   - **Augmented `RefreshToken` model**: added `jti UUID @unique`, `familyId UUID`, `isUsed Boolean @default(false)`, `isFamilyRevoked Boolean @default(false)`, `revokedAt DateTime?`, `usedAt DateTime?`, `ipAddress?`, `userAgent?` (rotation + reuse detection columns)
+2. Applied migration: `npx prisma migrate dev --create-only` → edited for Stock CHECK constraints (see Phase 1) → applied.
+3. Ran `prisma/add_stock_checks.ts` via ts-node to add `stock_quantity_nonnegative` and `stock_reserved_nonnegative` CHECK constraints to the Stock table (Prisma 7 removed `@@check` DSL, so we run raw `ALTER TABLE "Stock" ADD CONSTRAINT ... CHECK`).
 
-### Frontend Auth
-- `frontend/features/auth/apiSlice.ts` — RTK Query endpoints for login/refresh/logout/me
-- `frontend/features/auth/authSlice.ts` — Redux Toolkit slice for `{ user, isAuthenticated, loading }`
-- `frontend/store/store.ts` — Configure Redux store with the auth reducer + RTK Query API reducer + `setupListeners`
-- `frontend/app/(auth)/login/page.tsx` — Login page with React Hook Form + Zod validation, loading state, generic error messages ("Invalid email or password" — never reveal which is wrong)
-- `frontend/app/(dashboard)/layout.tsx` — Protected route wrapper: checks RTK Query `useGetMeQuery()` on mount. If loading → skeleton. If 401/not authenticated → redirect to `/login` with `?redirect=...` query param.
-- Logout button dispatches logout thunk: calls `/auth/logout` POST (invalidates server-side refresh token), clears Redux auth state, redirects to login.
+### 5.2 Seed — 7 Roles + 1 Admin User
+Ran `backend/prisma/seed_phase2_admin.ts` (ts-node, no -r tsconfig-paths since seed uses relative imports to `../src/lib/prisma`):
+- Upserts 7 roles in DB: SUPER_ADMIN, ADMIN, MANAGER, SALES, CASHIER, HR, VIEWER. First 2 marked `isSystem=true`.
+- Upserts 1 user: `admin@example.com`, bcrypt cost=10 hash of `Admin@123`, `mustChangePassword=true`, `status=ACTIVE`, linked to SUPER_ADMIN role.
+- **Enforced security policy**: seed admin MUST change password on first login (frontend redirects to `/change-password` until backend flips `mustChangePassword=false`).
 
-### Testing This Phase
-1. Create a test user directly in DB: Open pgAdmin, insert a User row with a bcrypt-hashed password. (We'll create seed script in Phase 3, but for now, manual insert.)
-2. Open browser → go to `/login` → enter credentials → verify:
-   - Network tab: POST /login returns 200 with accessToken in JSON body
-   - Application tab → Cookies → localhost → `refreshToken` cookie exists, HttpOnly=Yes, Secure=Yes (if HTTPS), SameSite=Lax
-   - Redux DevTools: auth slice shows isAuthenticated=true, user object populated
-3. Navigate to `/dashboard` — loads without redirect
-4. Wait 15 minutes (or manually delete access token from Redux via DevTools) — make an API call, verify it AUTOMATICALLY refreshes (see extra 401→refresh→200→original request 200 in Network tab)
-5. Click Logout — cookies cleared, redirect to login. Reloading `/dashboard` now redirects to login.
+### 5.3 Backend Auth Module — Security Rules (src/modules/auth/)
 
-**Concepts learned**: JWT structure (header.payload.signature), bcrypt cost factors, HTTP-only cookies vs localStorage security trade-offs, CSRF risks with cookies and why SameSite=Lax helps, token rotation vs reuse, RTK Query baseQuery reauthentication flow, Redux Toolkit slice pattern, Next.js protected route pattern.
+#### Security Properties Implemented
+| Property | Implementation |
+|---|---|
+| **User enumeration protection** | Login throws **VERBATIM same error** `"Invalid email or password."` for (wrong email) AND (wrong password). Also runs `bcrypt.compare(password, DUMMY_HASH)` when user is NOT found — ~same timing as real compare (~100ms) so an attacker can't distinguish "no user" from "wrong pw" by response time. |
+| **Forgot-password enumeration** | `POST /auth/forgot-password` **always returns 200** regardless of email existence. Dev mode prints `📧 FAKE EMAIL` banner with the reset link to backend terminal (SMTP env var integration not wired — per learning-notes decision #6). |
+| **Split-token storage** | ACCESS tokens (15 min) → in-memory Redux slice only (never localStorage). REFRESH tokens (7 days) → HttpOnly Secure SameSite=Lax cookies (JS can't read). Backend stores SHA-256 hash of refresh token (never plaintext) and SHA-256 of UUID reset token. |
+| **Refresh rotation** | Every `POST /auth/refresh` marks the current refresh row `isUsed=true`, `usedAt=now`, issues NEW refresh JWT with NEW jti under same familyId. Each exchange is one-use only. |
+| **Reuse detection + family revocation** | If an `isUsed=true` refresh row is ever reused (attacker replays old stolen cookie), backend updates EVERY row with same familyId → `isFamilyRevoked=true`. Result: both attacker AND real user are logged out globally. Real user re-logs in → new family. Attacker's stolen token now hits `Session revoked`. |
+| **Password strength (back+front match)** | Same Zod regex both sides: `/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/` (min 8, uppercase, lowercase, digit, 1 special char). Prevents "backend accepts but frontend rejects" bugs. |
+| **Refresh cookie scoped narrowly** | Cookie `Path=/api/v1/auth`. Browser only sends it to auth endpoints, not to `GET /api/v1/products`. Reduces CSRF surface area (though SameSite=Lax is primary CSRF defense). |
+| **Change password → logout everywhere** | Successful change-password or reset-password transactionally updates user.passwordHash + sets usedAt on reset token + REVOKES ALL user's existing refresh tokens in RefreshToken table. |
+| **Rate limits on auth endpoints** | `authStrictLimiter`: 10 req / 15 min window per IP on login/forgot/reset/refresh endpoints. |
+
+#### Files Created (backend/src/)
+```
+lib/prisma.ts         — Singleton PrismaClient with Prisma 7 PrismaPg adapter
+                       + globalThis.prisma cache for ts-node-dev connection leaks.
+config/env.ts         — Zod-parsed CONFIG singleton (fail-fast at boot if env missing).
+middleware/auth.ts    — authenticate(required=true) middleware. Bearer regex extracts
+                       JWT from Authorization, verifyAccessToken, attaches req.user.
+modules/auth/
+  validators.ts       — Zod DTOs: LoginSchema, ForgotPasswordSchema,
+                         ResetPasswordSchema, ChangePasswordSchema,
+                         measurePasswordStrength(0..4) helper.
+  types.ts            — UserProfileDto, LoginResponseDto, RefreshResponseDto.
+  services.ts         — AuthService with 7 methods: login, refresh, logout,
+                         me, forgotPassword, resetPassword, changePassword.
+                         (Most complex file: rotation, reuse detection, family revoke,
+                          bcrypt constant-time dummy compare, transactions.)
+  controllers.ts      — Thin layer. Parses req, calls service, serialize response,
+                         Set-Cookie for refresh login/refresh/logout/change-password.
+                         On refresh failure: ATTACHES cookie-clear header so the
+                         browser's stale cookie gets wiped on next 401 (prevents
+                         repeated errors on hydration).
+  routes.ts           — Express router. Schemas wrapped validate({body: X}) form
+                         (not flat X, since validate middleware expects {body,query,params}).
+utils/
+  jwt.ts              — signAccessToken, signRefreshToken, verifyAccessToken,
+                         verifyRefreshToken. IMPORTANT: uses REAL value import of
+                         RoleType (not `import type`) because z.nativeEnum() requires
+                         a runtime value. Fixed the "import type RoleType" strict error.
+  password.ts         — bcrypt saltRounds=10; DUMMY_HASH constant for constant-time
+                         user-not-found branch; hashPassword / verifyPassword.
+  cookies.ts          — buildRefreshCookieOptions() (HttpOnly; Secure in production;
+                         SameSite=Lax; Path=/api/v1/auth; Max-Age 7 days).
+                         CLEAR_REFRESH_COOKIE_OPTIONS (expires 1970, same path).
+  crypto.ts           — sha256Hex utility; hashRefreshToken helper. Both refresh
+                         token jti hashes and password reset UUIDs stored as sha256.
+  authTypes.ts        — AuthenticatedUser interface used by middleware augment.
+types/express.d.ts    — Augments Express Request with user, permissionCodes, requestId.
+```
+
+### 5.4 Frontend Auth Module — Client Side
+
+#### Key Design Decisions
+- **Access token NEVER persisted**: Redux auth slice holds accessToken only in volatile memory. Browser close → token gone. Refresh is via cookie (HttpOnly).
+- **baseQueryWithReauth mutex singleton**: 10 components render simultaneously → 10 API calls → all 10 return 401 simultaneously (because access token expired). Without mutex → 10 parallel `POST /auth/refresh` → first refresh marks jti used → other 9 hit reuse detection → family revoked → user logged out falsely. The mutex (async-mutex 0.5.0) serializes refreshes: **exactly 1** refresh call runs for N simultaneous 401s. After success → original N requests retried with new access token.
+- **AuthHydrationProvider wraps app children INSIDE StoreProvider**: Runs once on client mount (useEffect empty dep). If on dashboard path → silent `/auth/refresh` → if success → dispatch setCredentials → fire `/me` to fill user object → if user mustChangePassword → redirect /change-password. Show skeleton spinner while hydrating. Skips silent refresh on public auth pages (/login, /forgot-password, /reset-password) to reduce spurious 401s in backend logs.
+- **Remember me = email only**: Login form checkbox stores just the EMAIL in `localStorage` key `bs.auth.rememberEmail.v1`. The PASSWORD is never persisted (violates security).
+- **ChangePassword + ResetPassword pages**: On success → `dispatch(clearCredentials())` + `logoutTrigger()` + redirect to `/login?changed=1`.
+
+#### Files Created (frontend/src/)
+```
+lib/api/
+  baseQueryWithReauth.ts — RTK Query fetchBaseQuery wrapper. Mutex singleton.
+                          Injects Bearer ${accessToken} into headers. On 401:
+                          lock mutex, run refresh once, unlock, retry original req.
+  apiSlice.ts           — Single createApi with reducerPath "api", tagTypes empty.
+  authEndpoints.ts      — injectEndpoints on apiSlice:
+                            useLoginMutation (POST /auth/login)
+                            useRefreshMutation (POST /auth/refresh)
+                            useLogoutMutation (POST /auth/logout)
+                            useForgotPasswordMutation (POST /auth/forgot-password)
+                            useResetPasswordMutation (POST /auth/reset-password)
+                            useChangePasswordMutation (POST /auth/change-password)
+                            useMeQuery (GET /auth/me)
+store/
+  hooks.ts              — typed useAppSelector/useAppDispatch/useAppStore.
+  store.ts              — configureStore: [apiSlice.reducerPath]: apiSlice.reducer,
+                          auth: authReducer. Middleware: getDefault + apiSlice.middleware.
+                          setupListeners(makeStore().dispatch).
+  StoreProvider.tsx     — 'use client' thin wrapper. Per-request store (SSR safety):
+                          useRef<AppStore>; makeStore() first-render.
+  slices/authSlice.ts   — AuthState: { user, accessToken, isAuthenticated, loading,
+                                            hydrating, forceChangePassword }.
+                          Actions: setCredentials, setHydratedUser, updateAccessToken,
+                                   setLoading, setHydrating, setForceChangePassword,
+                                   clearCredentials.
+components/auth/
+  PasswordField.tsx     — forwardRef, show/hide eye toggle button, 4-bar strength
+                          meter with colors + labels, aria-describedby linking errors.
+  LoginForm.tsx         — RHF + zodResolver, useLoginMutation, Remember email in
+                          localStorage only, expired searchParam banner (session expired),
+                          errorForField distinguishes 429/403 vs generic message.
+  AuthHydrationProvider.tsx — Mounted inside StoreProvider in app/layout.tsx children.
+                          First mount refresh → /me → auth guard redirects.
+app/
+  layout.tsx            — Wraps children with AuthHydrationProvider.
+  (auth)/login/page.tsx              — Centered card, LoginForm render.
+  (auth)/forgot-password/page.tsx    — RHF + zod, forgot pw submit.
+  (auth)/reset-password/page.tsx     — Suspense wraps useSearchParams; token UUID
+                                        validation; new pw + confirm match.
+  (dashboard)/change-password/page.tsx — Current + New + Confirm fields. RTK 422
+                                        errors mapped to specific fields.
+                                        On success: clearRedux + logout + /login.
+  (dashboard)/layout.tsx             — Sidebar Sign out button actually calls
+                                        useLogoutMutation + clearCredentials + redirect.
+                                        Header user initials + fullName computed from
+                                        Redux auth.user (no longer "NJ / Nasif Jihan").
+```
+
+### 5.5 TypeScript Strict Errors Encountered & Fixed (9 backend + 11 frontend = 20 total)
+
+#### Backend 9 tsc errors (npx tsc --noEmit -p tsconfig.json):
+1. **`controllers.ts` generic mismatch**: `req: Request<ParamsDictionary, ...>` collided with AuthService's destructured meta extraction. Fix: removed explicit generic params; use plain `req: Request`.
+2. **`services.ts` DTO import path wrong**: Imported from `./types` → moved imports to `./validators` where Zod DTO type exports live.
+3. **`jwt.ts` z.nativeEnum(RoleType) runtime error**: `import type { RoleType }` → native enum needs a runtime value, not just type. Fix: `import { RoleType }` (plain value import).
+4. **`jwt.ts` SignOptions type string cast**: `{ expiresIn: CONFIG.accessExpiresIn }` passed to sign() as SignOptions. Fix: cast `as SignOptions`.
+5. **`routes.ts` validate middleware wrong arg shape**: Passed `validate(LoginSchema)` flat; middleware needs `validate({body: LoginSchema})` wrapper. Fixed all 5 auth route schemas.
+6. **`validators.ts` merged concatenation line artifact**: When concatenating export ChangePasswordDto line + next function comment, a stray character appeared. Split into separate lines.
+
+#### Frontend 11 tsc errors (npx tsc --noEmit):
+1. **`.next/types/validator.ts` bad validator cache to missing `src/app/page.js`**: Route groups structure means no flat `app/page.tsx`; Next generated stale type cache referencing missing JS module. Fix: **Remove `.next` from tsconfig.include + add `.next` to tsconfig.exclude**. Manual `npx tsc --noEmit` now ignores Next internal caches. Next dev/build itself still works via its own pipeline.
+2. **TS2783 `name` specified more than once × 6 places**: PasswordField was being passed both explicit `name="newPassword"` AND a spread `{...register("newPassword")}` that also returns `name`. register() spread already provides name, id, onChange, onBlur, ref. Fix: removed explicit `name=` props from LoginForm password field, reset-password page (2 fields), change-password page (3 fields).
+3. **lucide-react missing `DashboardIcon` export**: Header used `DashboardIcon` but icon actual name is `LayoutDashboard` (same as sidebar nav icon). Fix: import `LayoutDashboard` instead. Use it everywhere.
+4. **AuthHydrationProvider.tsx `useAppSelector.getState` invalid**: Leftover dead scaffolding from `useHydrateAuth` hook. Redux `useAppSelector` is a hook-function, not an object with .getState (that's store method). Fix: Deleted the entire dead useHydrateAuth custom hook + useEffect block (it had no effects; all redirect logic was already correctly implemented inline in AuthHydrationProvider component function below via proper selectors).
+5. **LoginForm `rtkError.status` missing on SerializedError**: RTK Query `.error` type is `FetchBaseQueryError | SerializedError`. `.status` exists on FetchBaseQueryError only. Fix: cast `(rtkError as { status?: number | string }).status` + compare both numeric and string (429/"429", 403/"403").
+6. **StoreProvider AppStore indexed by apiSlice.reducerPath**: TypeScript type `AppStore = ReturnType<typeof makeStore>` is technically `{ dispatch: ThunkDispatch } & Store<{api, auth}>`, but indexing `(storeRef.current as AppStore)["api"]` fails because the intersection type doesn't narrow correctly. Plus the check was redundant (makeStore always mounts api reducer). Fix: Simplified to `void apiSlice;` (silences unused import) — no runtime check needed since the reducer is statically mounted.
+
+### 5.6 Smoke Test Results (Verified Manually in Browser + PowerShell)
+
+| Test | Result | Notes |
+|---|---|---|
+| Backend boot logs: `Environment validated` + `DB OK (PG 18.6)` + listen :5000 | ✅ Pass | ts-node-dev auto-restarts |
+| PowerShell: `Invoke-RestMethod POST /auth/login admin@example.com/Admin@123` → success True + accessToken + set-cookie refreshToken | ✅ Pass | HttpOnly cookie visible in raw response headers |
+| Backend npx `tsc --noEmit -p tsconfig.json` | ✅ 0 errors | After 9 fixes |
+| Frontend `npm install` (async-mutex 0.5.0 added) | ✅ Pass | Ran after tsc |
+| Frontend `npx tsc --noEmit` (after fixing 11 errors) | ✅ 0 errors | Blank output |
+| Frontend `npm run dev` → Next 16.x with Turbopack on :3000 | ✅ Pass | - Local: http://localhost:3000 |
+| Browser: /login → submit admin/Admin@123 → **redirect /change-password** (mustChangePassword=true enforcement) | ✅ Pass | Hydration guard caught forceChangePassword flag |
+| Change password form: Current=Admin@123, New=NewPa$$w0rd2026!, Confirm=same → submit → success → logout → /login?changed=1 | ✅ Pass | Backend transaction flipped mustChangePassword=false, revoked all user's old refresh tokens globally, cleared cookie, dispatch clearCredentials |
+| Re-login NEW password → **redirect /dashboard** (not /change-password now) | ✅ Pass | Header shows real user initials + fullName (not NJ/Nasif Jihan), Sign out hoverable red |
+| Dashboard Sign out button → dispatch clearCredentials → /login | ✅ Pass | Refresh cookie cleared, Redux state wiped, trying to hit /dashboard manually redirects back |
+| Forgot password form → submit admin@example.com → backend terminal log `📧 FAKE EMAIL (dev) — Password reset link: http://localhost:3000/reset-password?token=<UUID>` | ✅ Pass | Backend envelope returned success=True regardless of email (anti-enumeration policy) |
+| Paste reset link into browser → /reset-password?token=<UUID> renders → enter Reset@2026! twice → submit → redirect /login | ✅ Pass | Token UUID validated in page; backend transactionally flipped usedAt + updated pw + logged out all sessions |
+| New password Reset@2026! logs in; old NewPa$$w0rd2026! fails | ✅ Pass | bcrypt.compare correctly re-hashes; no fallback to old credentials |
+
+### 5.7 Phase 2 Acceptance — Exit Criteria
+All items from Section 32 teaching header item 8 (Acceptance) checked:
+- ✅ Backend `tsc --noEmit -p tsconfig.json` = 0 errors
+- ✅ Frontend `tsc --noEmit` = 0 errors
+- ✅ Frontend `npm install` (async-mutex) completes successfully
+- ✅ Login → mustChangePassword redirect → change password → re-login with NEW password → /dashboard
+- ✅ Forgot/reset password flow via backend terminal reset link works; old passwords fail
+- ✅ Dashboard Sign out button actually logs out (clears Redux + cookie + redirect)
+- ✅ baseQueryWithReauth mutex singleton correctly implemented (async-mutex imported) — manual 5s TTL refresh test deferred to optional advanced
+- ✅ Refresh rotation + reuse detection logic correctly encoded in services.ts refresh() family revocation (Postman-level test deferred to optional)
+- ✅ Frontend store + RTK correctly wired: useMeQuery in AuthHydrationProvider, authSlice has isAuthenticated
+- ✅ User enumeration protected both endpoints (generic login error, dummy bcrypt compare)
+- ✅ Refresh tokens stored as SHA-256 hashes; reset tokens stored as SHA-256 of UUID
+- ✅ All auth endpoints have rate limits (authStrictLimiter 10/15min)
+- ✅ Access token lives only in Redux memory (NOT localStorage), refresh token ONLY in HttpOnly cookie
+- ✅ Dashboard layout has functional logout + dynamic avatar (not placeholder NJ)
+
+**Concepts learned**: Split-token storage (access in memory / refresh in HttpOnly cookie) security model; bcrypt constant-time dummy compare anti-timing-attack pattern; refresh token rotation jti + familyId lifecycle model; RTK Query "refresh storm" problem & async-mutex singleton solution; anti-enumeration error masking; why "SameSite=Lax + narrowly scoped Path" is better than SameSite=Strict for usability+security tradeoff; refresh cookie wipe on ANY refresh failure to prevent repeated noise errors from stale cookies in subsequent hydration cycles.
 
 ---
 

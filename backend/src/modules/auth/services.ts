@@ -441,18 +441,40 @@ export const AuthService = {
   },
 
   /**
-   * GET /api/v1/auth/me — returns current user profile from access token.
+   * GET /api/v1/auth/me — returns current user profile + permission codes.
    * Route-level authenticate() middleware already ran & attached req.user.
-   * Useful for: Frontend on page reload to "hydrate" Redux auth state.
+   * Useful for: Frontend on page reload to "hydrate" Redux auth state AND
+   * drive all PermissionGate wrappers (which rely on permissions list).
    */
-  async me(userId: string): Promise<UserProfileDto> {
-    const user = await prisma.user.findUnique({
+  async me(userId: string): Promise<{ user: UserProfileDto; permissions: string[] }> {
+    const row = await prisma.user.findUnique({
       where: { id: userId },
-      include: { role: { select: { name: true, id: true } } },
+      include: {
+        role: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            permissions: {
+              select: { permission: { select: { code: true } } },
+            },
+          },
+        },
+      },
     });
-    if (!user) throw new NotFoundError("User not found.");
-    if (user.status !== "ACTIVE") throw new ForbiddenError("Account is inactive.");
-    return userToDto(user);
+    if (!row) throw new NotFoundError("User not found.");
+    if (row.status !== "ACTIVE") throw new ForbiddenError("Account is inactive.");
+    const permissions =
+      row.role?.permissions?.map((rp) => rp.permission.code).filter(Boolean) ?? [];
+    return {
+      user: userToDto({
+        ...row,
+        role: row.role
+          ? { id: row.role.id, name: row.role.name, displayName: row.role.displayName }
+          : null,
+      }),
+      permissions,
+    };
   },
 
   /**

@@ -21,7 +21,17 @@ export const apiSlice = createApi({
   refetchOnReconnect: true,
   tagTypes: [
     // Global entity cache tags — modules add their own.
-    // Authentication module uses none (auth never cached, always fresh)
+    "me",
+    "Users",
+    "Roles",
+    "Permissions",
+    "AuditLogs",
+    "Profile",
+    // Phase 4+: "Customers", "Leads", "Contacts"
+    // Phase 5+: "Products", "Categories", "Warehouses", "Stock", "StockMovements"
+    // Phase 6+: "Orders", "Invoices", "Payments"
+    // Phase 7+: "Employees", "Attendance", "LeaveRequests"
+    // Phase 8+: "DashboardKPIs"
   ],
   endpoints: () => ({}),
 });
