@@ -7,7 +7,7 @@
  * By storing only the SHA-256 hash, a SELECT * dump gives attacker zero usable links.
  * On verification we re-hash the incoming raw token, compare against DB hash.
  */
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 
 export function sha256Hex(input: string): string {
   return createHash("sha256").update(input, "utf8").digest("hex");
@@ -18,5 +18,5 @@ export function hashRefreshToken(jwtOrToken: string): string {
 }
 
 export function randomToken(lenBytes = 32): string {
-  return createHash("sha512").update(require("crypto").randomBytes(lenBytes)).digest("hex");
+  return createHash("sha512").update(randomBytes(lenBytes)).digest("hex");
 }

@@ -15,7 +15,11 @@
     "skipLibCheck": true,
 
     "resolveJsonModule": true,
-    "sourceMap": true
+    "sourceMap": true,
+
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src/**/*.ts", "prisma/**/*.ts"],
   "exclude": ["node_modules", "dist"]

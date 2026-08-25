@@ -13,6 +13,7 @@ import {
   LoginSchema,
   ForgotPasswordSchema,
   ResetPasswordSchema,
+  ChangePasswordSchema,
 } from "./validators";
 
 export const authRouter = Router();
@@ -21,11 +22,17 @@ export const authRouter = Router();
 authRouter.use(authStrictLimiter);
 
 // ── Public (no access token needed) ───────────────────────────────────────
-authRouter.post("/login",           validate(LoginSchema),            AuthController.login);
+authRouter.post("/login",           validate({ body: LoginSchema }),            AuthController.login);
 authRouter.post("/refresh",                                              AuthController.refresh);
 authRouter.post("/logout",                                               AuthController.logout);
-authRouter.post("/forgot-password", validate(ForgotPasswordSchema),  AuthController.forgotPassword);
-authRouter.post("/reset-password",  validate(ResetPasswordSchema),   AuthController.resetPassword);
+authRouter.post("/forgot-password", validate({ body: ForgotPasswordSchema }),  AuthController.forgotPassword);
+authRouter.post("/reset-password",  validate({ body: ResetPasswordSchema }),   AuthController.resetPassword);
 
 // ── Protected (access token required) ────────────────────────────────────
 authRouter.get("/me", authenticate(true), AuthController.me);
+authRouter.post(
+  "/change-password",
+  authenticate(true),
+  validate({ body: ChangePasswordSchema }),
+  AuthController.changePassword
+);

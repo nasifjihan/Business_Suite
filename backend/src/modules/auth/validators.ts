@@ -38,7 +38,7 @@ export const ChangePasswordSchema = z.object({
 });
 export type ChangePasswordDto = z.infer<typeof ChangePasswordSchema>;
 
-/* Utility: return password strength 0..4 for meter UI (frontend reusable copy). */
+/** Return password strength 0..4 for meter UI (frontend reusable copy). */
 export function measurePasswordStrength(pw: string): 0 | 1 | 2 | 3 | 4 {
   let score = 0;
   if (!pw) return 0;

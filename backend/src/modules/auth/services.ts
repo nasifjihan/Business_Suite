@@ -8,7 +8,14 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { CONFIG } from "@/config/env";
 import { hashPassword, verifyPassword } from "@/utils/password";
-import { signAccessToken, signRefreshToken, verifyRefreshToken, RefreshTokenPayloadSchema, type AccessTokenPayload, type RefreshTokenPayload } from "@/utils/jwt";
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+  RefreshTokenPayloadSchema,
+  type AccessTokenPayload,
+  type RefreshTokenPayload,
+} from "@/utils/jwt";
 import { hashRefreshToken } from "@/utils/crypto";
 import {
   UnauthorizedError,
@@ -20,10 +27,13 @@ import {
 import type { RoleType, UserStatus } from "@prisma/client";
 import type {
   LoginDto,
-  LoginResponseDto,
-  RefreshResponseDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ChangePasswordDto,
+} from "./validators";
+import type {
+  LoginResponseDto,
+  RefreshResponseDto,
   UserProfileDto,
 } from "./types";
 import type { Request } from "express";
@@ -36,7 +46,13 @@ function expiresInToSeconds(s: string): number {
   const [, nRaw, unit = "m"] = m;
   const n = parseInt(nRaw, 10);
   const mult: Record<string, number> = {
-    ms: 0.001, s: 1, m: 60, h: 3600, d: 86400, w: 604800, y: 31536000,
+    ms: 0.001,
+    s: 1,
+    m: 60,
+    h: 3600,
+    d: 86400,
+    w: 604800,
+    y: 31536000,
   };
   return Math.floor(n * (mult[unit] ?? 60));
 }
@@ -82,7 +98,7 @@ export const AuthService = {
    */
   async login(
     dto: LoginDto,
-    meta: { ip: string | undefined; ua: string | undefined }
+    meta: { ip: string | undefined; ua: string | undefined },
   ): Promise<{ response: LoginResponseDto; refreshJwt: string }> {
     const email = dto.email.trim().toLowerCase();
 
@@ -92,7 +108,10 @@ export const AuthService = {
       include: { role: { select: { name: true, id: true } } },
     });
 
-    const passwordValid = await verifyPassword(dto.password, user?.passwordHash);
+    const passwordValid = await verifyPassword(
+      dto.password,
+      user?.passwordHash,
+    );
 
     // ⚠️ USER ENUMERATION PROTECTION: same error code + message regardless of
     // whether email does not exist or password is wrong.
@@ -101,7 +120,9 @@ export const AuthService = {
     }
 
     if (user.status !== "ACTIVE") {
-      throw new ForbiddenError("This account has been disabled. Contact your administrator.");
+      throw new ForbiddenError(
+        "This account has been disabled. Contact your administrator.",
+      );
     }
 
     // Rotation = create a NEW refresh token every login (reuse detection later)
@@ -174,10 +195,12 @@ export const AuthService = {
    */
   async refresh(
     rawRefreshJwt: string | undefined,
-    meta: { ip: string | undefined; ua: string | undefined }
+    meta: { ip: string | undefined; ua: string | undefined },
   ): Promise<{ response: RefreshResponseDto; newRefreshJwt: string }> {
     if (!rawRefreshJwt) {
-      throw new UnauthorizedError("Refresh token cookie not present. Please log in again.");
+      throw new UnauthorizedError(
+        "Refresh token cookie not present. Please log in again.",
+      );
     }
     const decoded = verifyRefreshToken(rawRefreshJwt);
     // Double-verify decoded shape (redundant with verifyRefreshToken but belt-and-braces)
@@ -185,12 +208,25 @@ export const AuthService = {
 
     const row = await prisma.refreshToken.findUnique({
       where: { jti: payload.jti },
-      include: { user: { include: { role: { select: { name: true, id: true } } } },
+      include: {
+        user: {
+          include: {
+            role: {
+              select: {
+                name: true,
+                id: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!row) {
       // JWT signature is valid, but we never stored this jti → attacker forged from leaked old secret? revoke cookie anyway.
-      throw new UnauthorizedError("Refresh token not found in store. Please log in again.");
+      throw new UnauthorizedError(
+        "Refresh token not found in store. Please log in again.",
+      );
     }
 
     // 1. Reuse detection — ATTACK!
@@ -201,18 +237,24 @@ export const AuthService = {
         data: { isFamilyRevoked: true, revokedAt: new Date() },
       });
       throw new UnauthorizedError(
-        "Suspicious activity detected: this refresh token was used twice. For your security, the entire session family has been logged out. Please log in again."
+        "Suspicious activity detected: this refresh token was used twice. For your security, the entire session family has been logged out. Please log in again.",
       );
     }
 
     if (row.isFamilyRevoked || row.revokedAt !== null) {
-      throw new UnauthorizedError("Session has been revoked. Please log in again.");
+      throw new UnauthorizedError(
+        "Session has been revoked. Please log in again.",
+      );
     }
     if (new Date() > row.expiresAt) {
-      throw new UnauthorizedError("Refresh token expired. Please log in again.");
+      throw new UnauthorizedError(
+        "Refresh token expired. Please log in again.",
+      );
     }
     if (row.userId !== payload.sub) {
-      throw new UnauthorizedError("Refresh token does not match user id. Please log in again.");
+      throw new UnauthorizedError(
+        "Refresh token does not match user id. Please log in again.",
+      );
     }
     if (!row.user || row.user.status !== "ACTIVE") {
       throw new ForbiddenError("This account has been disabled.");
@@ -221,7 +263,12 @@ export const AuthService = {
     // 5. Rotate: mark current isUsed + usedAt
     await prisma.refreshToken.update({
       where: { jti: payload.jti },
-      data: { isUsed: true, usedAt: new Date(), ipAddress: meta.ip ?? row.ipAddress, userAgent: meta.ua ?? row.userAgent },
+      data: {
+        isUsed: true,
+        usedAt: new Date(),
+        ipAddress: meta.ip ?? row.ipAddress,
+        userAgent: meta.ua ?? row.userAgent,
+      },
     });
 
     // 6 + 7: Mint new tokens (same family, NEW jti so ROTATION step is 100% complete)
@@ -293,7 +340,10 @@ export const AuthService = {
    *   - In LOCAL DEV: console.log the clickable reset link directly in backend terminal.
    *     (No email service configured. Production: integrate SendGrid/Resend/SES here.)
    */
-  async forgotPassword(dto: ForgotPasswordDto, _meta: { ip?: string; ua?: string }): Promise<{ ok: true; rawToken?: string; resetLink?: string }> {
+  async forgotPassword(
+    dto: ForgotPasswordDto,
+    _meta: { ip?: string; ua?: string },
+  ): Promise<{ ok: true; rawToken?: string; resetLink?: string }> {
     const email = dto.email.toLowerCase();
     const user = await prisma.user.findUnique({ where: { email } });
 
@@ -312,11 +362,15 @@ export const AuthService = {
       });
       const resetLink = `${CONFIG.cors.frontendUrl}/reset-password?token=${rawToken}`;
       // NO EMAIL SERVICE in local dev — print to terminal (admin can click)
-      console.log("📧 [FAKE EMAIL - LOCAL DEV ONLY] ============================================");
+      console.log(
+        "📧 [FAKE EMAIL - LOCAL DEV ONLY] ============================================",
+      );
       console.log(`  To: ${user.email}`);
       console.log(`  Subject: Password reset link (expires in 15 minutes)`);
       console.log(`  Link: ${resetLink}`);
-      console.log("======================================================================");
+      console.log(
+        "======================================================================",
+      );
       return { ok: true, rawToken, resetLink };
     }
 
@@ -334,7 +388,10 @@ export const AuthService = {
    *   - One-shot: flip usedAt, UPDATE user.passwordHash, flip mustChangePassword to false
    *   - Also: revoke ALL refresh tokens for this user (logout everywhere = safe practice)
    */
-  async resetPassword(dto: ResetPasswordDto, _meta: { ip?: string; ua?: string }): Promise<{ ok: true }> {
+  async resetPassword(
+    dto: ResetPasswordDto,
+    _meta: { ip?: string; ua?: string },
+  ): Promise<{ ok: true }> {
     const tokenHash = hashRefreshToken(dto.token);
     const row = await prisma.passwordResetToken.findUnique({
       where: { tokenHash },
@@ -342,13 +399,19 @@ export const AuthService = {
     });
 
     if (!row) {
-      throw new UnprocessableEntityError("This reset link is invalid or has already been used.");
+      throw new UnprocessableEntityError(
+        "This reset link is invalid or has already been used.",
+      );
     }
     if (row.usedAt !== null) {
-      throw new UnprocessableEntityError("This reset link has already been used. Please request a new one.");
+      throw new UnprocessableEntityError(
+        "This reset link has already been used. Please request a new one.",
+      );
     }
     if (new Date() > row.expiresAt) {
-      throw new UnprocessableEntityError("This reset link has expired. Please request a new one.");
+      throw new UnprocessableEntityError(
+        "This reset link has expired. Please request a new one.",
+      );
     }
     if (!row.user) {
       throw new NotFoundError("No user found for this reset link.");
@@ -390,5 +453,55 @@ export const AuthService = {
     if (!user) throw new NotFoundError("User not found.");
     if (user.status !== "ACTIVE") throw new ForbiddenError("Account is inactive.");
     return userToDto(user);
+  },
+
+  /**
+   * POST /auth/change-password — authenticated user changes their own password.
+   * (NOT password reset via email! That's the reset-password endpoint above.)
+   *
+   * Flow:
+   *   1. Fetch user by req.user.id
+   *   2. bcrypt.compare(currentPassword, user.passwordHash) — fail with 422 if wrong
+   *   3. newPassword same as old → ConflictError "Must choose a new password."
+   *   4. bcrypt.hash(newPassword) → UPDATE user
+   *   5. Flip mustChangePassword flag to false (so seed admin can finally pass the gate)
+   *   6. Revoke ALL existing refresh tokens for this user → logout everywhere
+   *   7. Return { ok: true }
+   */
+  async changePassword(
+    dto: ChangePasswordDto & { userId: string }
+  ): Promise<{ ok: true }> {
+    const user = await prisma.user.findUnique({ where: { id: dto.userId } });
+    if (!user) throw new NotFoundError("User not found.");
+    if (user.status !== "ACTIVE") throw new ForbiddenError("Account is inactive.");
+
+    const currentPwValid = await verifyPassword(dto.currentPassword, user.passwordHash);
+    if (!currentPwValid) {
+      throw new UnprocessableEntityError(
+        "Current password is incorrect. Please try again or use Forgot Password."
+      );
+    }
+
+    // Guard against reusing the same password (policy)
+    const sameAsOld = await verifyPassword(dto.newPassword, user.passwordHash);
+    if (sameAsOld) {
+      throw new ConflictError("New password must be different from the current password.");
+    }
+
+    const passwordHash = await hashPassword(dto.newPassword);
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash, mustChangePassword: false },
+      }),
+      // Logout EVERYWHERE (security best practice after password change)
+      prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date(), isFamilyRevoked: true },
+      }),
+    ]);
+
+    return { ok: true };
   },
 };

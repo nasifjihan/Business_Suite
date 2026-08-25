@@ -8,11 +8,11 @@
  *   Stored server-side in RefreshToken table for revocation.
  *   Sent in HTTP-only SET-COOKIE header — NEVER in JSON body (prevent XSS).
  */
-import jwt from "jsonwebtoken";
+import jwt, { type SignOptions } from "jsonwebtoken";
 import { z } from "zod";
 import { CONFIG } from "@/config/env";
 import { UnauthorizedError } from "@/lib/errors";
-import type { RoleType } from "@prisma/client";
+import { RoleType } from "@prisma/client";
 
 /**
  * Zod runtime schemas: even though `jsonwebtoken.verify` signature says string,
@@ -46,7 +46,7 @@ export function signAccessToken(payload: Omit<AccessTokenPayload, "type" | "iat"
   return jwt.sign(
     { ...payload, type: "access" as const },
     CONFIG.jwt.accessSecret,
-    { expiresIn: CONFIG.jwt.accessExpiresIn }
+    { expiresIn: CONFIG.jwt.accessExpiresIn } as SignOptions
   );
 }
 
@@ -54,7 +54,7 @@ export function signRefreshToken(payload: Omit<RefreshTokenPayload, "type" | "ia
   return jwt.sign(
     { ...payload, type: "refresh" as const },
     CONFIG.jwt.refreshSecret,
-    { expiresIn: CONFIG.jwt.refreshExpiresIn }
+    { expiresIn: CONFIG.jwt.refreshExpiresIn } as SignOptions
   );
 }
 
