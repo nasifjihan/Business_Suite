@@ -48,11 +48,31 @@ The auth API endpoints exist (POST /forgot-password, POST /reset-password) but w
 
 ## Phase 1 — Core Shells: Lessons Learned
 
-### Mistakes:
-1. _(To be filled in)_
+### Mistakes during implementation:
+1. **Prisma 7 major breaking changes caught us off-guard THREE times.**
+   - Prisma 7.9.1 (latest stable) removed:
+     a. `datasource url = env("DATABASE_URL")` inline in schema.prisma → must live in `prisma.config.ts`
+     b. `@@check` native CHECK constraint syntax in schema.prisma (feature may re-appear later; we worked around by running ALTER TABLE SQL via ts-node script)
+     c. **MOST IMPORTANTLY: The native Rust/Go postgres drivers were REMOVED entirely.** Every connection now requires a JS driver adapter: `@prisma/adapter-pg` + `pg` node-postgres package. `new PrismaClient()` with zero args now throws `PrismaClient was instantiated without any options — a driver adapter is required`.
+   - We considered downgrading to Prisma 6.19.3 (LTS) but user chose **Option B** — stay on Prisma 7 and learn the new architecture. This was the right teaching choice: Prisma 7 is what teams will migrate to in 2026.
+2. **Prisma 7 relationship validation is strict on BOTH sides of a relation.** Four groups of issues surfaced: User↔Employee inverse incorrectly configured, Order↔Warehouse missing inverse, Department↔Designation missing inverse, Employee self-relation missing relation name on the manager FK side. Fix pattern: every `@relation(fields:[fk], references:[id])` owning side MUST have a matching `inverseField: Model[]` (or `Model?` for 1:1) on the OTHER side with the SAME relation name string (for self-refs).
+3. **Postgres `$queryRaw` column name quoting:** `Stock.reservedQuantity` (camelCase Prisma field with no `@map`/`@@map`) maps to PG `"reservedQuantity"` (double-quoted). Raw SQL with unquoted `reserved_quantity` fails with "column does not exist". Rule of thumb for raw SQL on Prisma tables: If schema didn't snake_case it, quote the camelCase name when writing SQL manually.
 
 ### Key decisions:
-1. _(To be filled in)_
+1. **Prisma 7 driver adapter singleton pattern (src/lib/prisma.ts):** `new Pool({ connectionString })` + `new PrismaPg(pool)` → `new PrismaClient({ adapter })`. Wrapped with the globalThis cache pattern to prevent ts-node-dev connection leaks. All code paths (app.ts, seed.ts, add_stock_checks.ts, tests) import `from "@/lib/prisma"` — never instantiate PrismaClient inline (that would spawn 2 pools).
+2. **Fail-fast Zod env validation imported FIRST in server.ts:** `import "./config/env"` runs BEFORE Express even starts. If DATABASE_URL, JWT secrets, ports are missing/invalid the process DIES with a colored bullet list of issues instead of letting undefined leak.
+3. **Standard 7 middleware ORDER in app.ts is NON-NEGOTIABLE:** helmet(1) → cors(2) → compression(3) → json + cookieParser(4) → rateLimit(5) → auditLogger(6) → routes(7) → notFound → errorHandler(LAST!). Interviewer favorite: "Why is errorHandler last?" Because it's the catch-all after ALL layers have run.
+4. **Response envelope strictly enforced by library functions** `successResponse<T>` / `errorResponse` in src/lib/response.ts. Controllers NEVER do `res.json({ whatever })` — envelope structure is the same on every endpoint, RTK query code only needs one unwrap path.
+5. **Typed error class hierarchy:** BadRequestError / UnauthorizedError / ForbiddenError / NotFoundError / ConflictError / UnprocessableEntityError / TooManyRequestsError all extend AppError. errorHandler catches these and maps HTTP status codes. Controllers/services ONLY throw typed classes, never strings or raw Error().
+6. **Next.js frontend store pattern:** `StoreProvider.tsx` as a thin `'use client'` wrapper that the root Server Component layout can import without blowing up. This is the only correct Next.js App Router way to wrap a Redux Provider.
+7. **Route groups (parentheses folders):** src/app/(public), (auth), (dashboard). Public has marketing navbar, auth has centered card, dashboard has collapsible sidebar. These share layouts but do NOT create URL segments — health-test URL is clean `/dashboard/health-test`, not `/(dashboard)/health-test`.
+
+### Interview takeaways:
+1. *"What was the hardest part of Phase 1?"* → Configuring Prisma 7 without its native driver. The community hasn't 100% migrated yet, so Stack Overflow answers are mixed between 6.x and 7.x. Fixing that taught me the value of reading the actual migration guide instead of copying examples.
+2. *"Walk me through the Express middleware stack."* → (Answer in order: 1-helmet, 2-cors, 3-compression, 4-parsers, 5-rateLimit, 6-auditLogger, 7-routes → notFound → errorHandler LAST. Reasoning for each placement.)
+3. *"What's the difference between Prisma migrate dev, migrate deploy, and db push?"* → (Standard answer per BUILD_PROCESS.md answer key).
+4. *"Why a typed error hierarchy instead of throwing strings?"* → Centralized envelope + status code mapping, consistent error codes client-side, IDE autocomplete on error classes, no random ad-hoc status codes scattered in controllers.
+5. *"Explain StoreProvider.tsx — why not put <Provider> directly in root layout.tsx?"* → layout.tsx is a Server Component (no hooks, no context). Provider needs 'use client'. Wrap in a small 'use client' file = best of both worlds: server-side metadata rendering + client-side Redux.
 
 ---
 

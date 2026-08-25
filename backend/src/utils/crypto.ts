@@ -1,14 +1,22 @@
 /**
- * Cryptographic utils NOT related to JWT signing (JWT uses jsonwebtoken package).
- *   - randomToken(n) = cryptographically random URL-safe string (for password reset links, refresh token jti)
- *   - sha256(str)   = hex-encoded sha256 (for storing refresh-token families, so DB leak doesn't give usable tokens)
+ * SHA-256 helpers for refresh & password-reset tokens.
+ *
+ * Why hash tokens we store? Defense-in-depth:
+ *   - Raw refresh JWTs can mint new access tokens if stolen from DB.
+ *   - Password reset raw tokens can change a user's password.
+ * By storing only the SHA-256 hash, a SELECT * dump gives attacker zero usable links.
+ * On verification we re-hash the incoming raw token, compare against DB hash.
  */
-import { randomBytes, createHash } from "node:crypto";
+import { createHash } from "crypto";
 
-export function randomToken(bytes = 32): string {
-  return randomBytes(bytes).toString("base64url");
+export function sha256Hex(input: string): string {
+  return createHash("sha256").update(input, "utf8").digest("hex");
 }
 
-export function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
+export function hashRefreshToken(jwtOrToken: string): string {
+  return sha256Hex(jwtOrToken);
+}
+
+export function randomToken(lenBytes = 32): string {
+  return createHash("sha512").update(require("crypto").randomBytes(lenBytes)).digest("hex");
 }

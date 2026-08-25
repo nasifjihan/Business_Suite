@@ -21,6 +21,7 @@ enum UserStatus {
 }
 
 enum RoleType {
+  SUPER_ADMIN
   ADMIN
   MANAGER
   SALES
@@ -192,22 +193,24 @@ model RolePermission {
 }
 
 model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  passwordHash String
-  firstName    String
-  lastName     String
-  avatarUrl    String?
-  status       UserStatus @default(ACTIVE)
-  roleId       String?
-  employeeId   String?    @unique
-  lastLoginAt  DateTime?  @db.Timestamptz(6)
-  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+  id                 String     @id @default(uuid())
+  email              String     @unique
+  passwordHash       String
+  firstName          String
+  lastName           String
+  avatarUrl          String?
+  status             UserStatus @default(ACTIVE)
+  mustChangePassword Boolean    @default(true)
+  roleId             String?
+  employeeId         String?    @unique
+  lastLoginAt        DateTime?  @db.Timestamptz(6)
+  createdAt          DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
 
   role              Role?           @relation(fields: [roleId], references: [id], onDelete: Restrict)
   employee          Employee?       @relation(fields: [employeeId], references: [id], onDelete: SetNull)
   refreshTokens     RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
   auditLogs         AuditLog[]
   createdCustomers  Customer[]      @relation("UserCreatedCustomers")
   createdLeads      Lead[]          @relation("UserCreatedLeads")
@@ -228,21 +231,45 @@ model User {
 }
 
 model RefreshToken {
-  id        String    @id @default(uuid())
-  userId    String
-  tokenHash String    @unique
-  expiresAt DateTime  @db.Timestamptz(6)
-  issuedAt  DateTime  @default(now()) @db.Timestamptz(6)
-  revokedAt DateTime? @db.Timestamptz(6)
-  ipAddress String?
-  userAgent String?
-  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  id               String    @id @default(uuid())
+  userId           String
+  jti              String    @unique
+  familyId         String
+  tokenHash        String    @unique
+  expiresAt        DateTime  @db.Timestamptz(6)
+  issuedAt         DateTime  @default(now()) @db.Timestamptz(6)
+  isUsed           Boolean   @default(false)
+  isFamilyRevoked  Boolean   @default(false)
+  revokedAt        DateTime? @db.Timestamptz(6)
+  usedAt           DateTime? @db.Timestamptz(6)
+  ipAddress        String?
+  userAgent        String?
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([jti])
+  @@index([familyId])
   @@index([expiresAt])
   @@index([tokenHash])
+}
+
+model PasswordResetToken {
+  id         String   @id @default(uuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime @db.Timestamptz(6)
+  usedAt     DateTime? @db.Timestamptz(6)
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
 }
 
 model AuditLog {
