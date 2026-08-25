@@ -1,0 +1,764 @@
+// Business Suite — Complete Prisma Schema (28 tables, 17 enums)
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // ⚠️ Prisma 7.x NOTE: DATABASE_URL is configured in prisma.config.ts (datasource.url)
+  // No `url` field is allowed in this block for Prisma 7+.
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ENUMS (17 total)
+// ═══════════════════════════════════════════════════════════════════════
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RoleType {
+  ADMIN
+  MANAGER
+  SALES
+  CASHIER
+  HR
+  VIEWER
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+enum LeadSource {
+  WEBSITE
+  REFERRAL
+  SOCIAL
+  PHONE
+  EMAIL
+  OTHER
+}
+
+enum ActivityType {
+  CALL
+  EMAIL
+  MEETING
+  NOTE
+  TASK
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE
+  RETURN
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MOBILE_BANKING
+  BANK_TRANSFER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOID
+  OVERDUE
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+  LEAVE
+  HALF_DAY
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// AUTH & ADMINISTRATION (6 tables)
+// ═══════════════════════════════════════════════════════════════════════
+
+model Role {
+  id          String   @id @default(uuid())
+  name        RoleType @unique
+  displayName String
+  description String?
+  isSystem    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@index([name])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  module      String
+  action      String
+  description String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@index([module])
+  @@index([code])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  assignedAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  avatarUrl    String?
+  status       UserStatus @default(ACTIVE)
+  roleId       String?
+  employeeId   String?    @unique
+  lastLoginAt  DateTime?  @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+
+  role              Role?           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  employee          Employee?       @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  refreshTokens     RefreshToken[]
+  auditLogs         AuditLog[]
+  createdCustomers  Customer[]      @relation("UserCreatedCustomers")
+  createdLeads      Lead[]          @relation("UserCreatedLeads")
+  assignedLeads     Lead[]          @relation("UserAssignedLeads")
+  leadActivities    LeadActivity[]
+  createdProducts   Product[]
+  warehousesManaged Warehouse[]
+  stockMovements    StockMovement[] @relation("StockMovementCreator")
+  createdOrders     Order[]
+  paymentsReceived  Payment[]
+  departments       Department[]
+  leaveApprovals    LeaveRequest[]  @relation("LeaveApprover")
+
+  @@index([email])
+  @@index([roleId])
+  @@index([status])
+  @@index([employeeId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz(6)
+  issuedAt  DateTime  @default(now()) @db.Timestamptz(6)
+  revokedAt DateTime? @db.Timestamptz(6)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([tokenHash])
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String?
+  action     AuditAction
+  entityType String
+  entityId   String?
+  beforeData Json?
+  afterData  Json?
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime    @default(now()) @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CRM (4 tables)
+// ═══════════════════════════════════════════════════════════════════════
+
+model Customer {
+  id           String         @id @default(uuid())
+  customerCode String         @unique
+  name         String
+  companyName  String?
+  email        String?        @unique
+  phone        String?
+  mobile       String?
+  address      String?
+  city         String?
+  state        String?
+  country      String?
+  postalCode   String?
+  totalSpent   Decimal        @default(0) @db.Decimal(14, 2)
+  orderCount   Int            @default(0)
+  notes        String?
+  status       CustomerStatus @default(ACTIVE)
+  createdBy    String?
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(6)
+
+  creator  User?     @relation("UserCreatedCustomers", fields: [createdBy], references: [id], onDelete: SetNull)
+  contacts Contact[]
+  orders   Order[]
+  invoices Invoice[]
+
+  @@index([customerCode])
+  @@index([name])
+  @@index([email])
+  @@index([status])
+  @@index([createdBy])
+  @@index([createdAt])
+}
+
+model Contact {
+  id          String   @id @default(uuid())
+  customerId  String
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String?
+  mobile      String?
+  designation String?
+  department  String?
+  isPrimary   Boolean  @default(false)
+  notes       String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([firstName, lastName])
+}
+
+model Lead {
+  id           String     @id @default(uuid())
+  leadCode     String     @unique
+  name         String
+  companyName  String?
+  email        String?
+  phone        String?
+  source       LeadSource @default(OTHER)
+  status       LeadStatus @default(NEW)
+  value        Decimal    @default(0) @db.Decimal(14, 2)
+  probability  Int        @default(0) // 0-100 %
+  assignedToId String?
+  createdBy    String?
+  notes        String?
+  wonLostAt    DateTime?  @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+
+  assignedTo User?          @relation("UserAssignedLeads", fields: [assignedToId], references: [id], onDelete: SetNull)
+  creator    User?          @relation("UserCreatedLeads", fields: [createdBy], references: [id], onDelete: SetNull)
+  activities LeadActivity[]
+
+  @@index([leadCode])
+  @@index([name])
+  @@index([status])
+  @@index([source])
+  @@index([assignedToId])
+  @@index([createdBy])
+  @@index([createdAt])
+}
+
+model LeadActivity {
+  id          String       @id @default(uuid())
+  leadId      String
+  userId      String
+  type        ActivityType
+  subject     String
+  description String?
+  activityAt  DateTime     @default(now()) @db.Timestamptz(6)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([leadId])
+  @@index([userId])
+  @@index([activityAt])
+  @@index([type])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INVENTORY (5 tables)
+// ═══════════════════════════════════════════════════════════════════════
+
+model Category {
+  id          String        @id @default(uuid())
+  name        String        @unique
+  code        String?       @unique
+  description String?
+  imageUrl    String?
+  status      ProductStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+
+  products Product[]
+
+  @@index([name])
+  @@index([status])
+}
+
+model Product {
+  id            String        @id @default(uuid())
+  sku           String        @unique
+  name          String
+  description   String?
+  categoryId    String?
+  brand         String?
+  unit          String        @default("pcs") // pcs, kg, box, etc.
+  purchasePrice Decimal       @default(0) @db.Decimal(14, 2)
+  sellingPrice  Decimal       @default(0) @db.Decimal(14, 2)
+  taxRate       Decimal       @default(0) @db.Decimal(5, 2) // percentage
+  minimumStock  Int           @default(0)
+  imageUrl      String?
+  barcode       String?       @unique
+  status        ProductStatus @default(ACTIVE)
+  createdBy     String?
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+
+  category       Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  creator        User?           @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  stockRows      Stock[]
+  stockMovements StockMovement[]
+  orderItems     OrderItem[]
+
+  @@index([sku])
+  @@index([name])
+  @@index([categoryId])
+  @@index([status])
+  @@index([createdBy])
+  @@index([sellingPrice])
+  @@index([createdAt])
+}
+
+model Warehouse {
+  id        String        @id @default(uuid())
+  code      String        @unique
+  name      String        @unique
+  address   String?
+  city      String?
+  country   String?
+  managerId String?
+  status    ProductStatus @default(ACTIVE)
+  createdAt DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(6)
+
+  manager        User?           @relation(fields: [managerId], references: [id], onDelete: SetNull)
+  stockRows      Stock[]
+  stockMovements StockMovement[]
+  orders         Order[]
+
+  @@index([code])
+  @@index([name])
+  @@index([managerId])
+  @@index([status])
+}
+
+model Stock {
+  productId        String
+  warehouseId      String
+  quantity         Int       @default(0)
+  reservedQuantity Int       @default(0)
+  avgCostPrice     Decimal   @default(0) @db.Decimal(14, 2)
+  lastMovementAt   DateTime? @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  // NOTE: Database-level CHECK constraints are added via raw SQL in the migration file
+  // (migration.sql footer: stock_quantity_nonnegative, stock_reserved_nonnegative)
+  // Prisma 7.x schema syntax for CHECK changed; raw SQL is the portable, supported path.
+
+  @@id([productId, warehouseId])
+  @@index([warehouseId])
+}
+
+model StockMovement {
+  id            String            @id @default(uuid())
+  productId     String
+  warehouseId   String
+  type          StockMovementType
+  quantity      Int
+  unitCost      Decimal           @default(0) @db.Decimal(14, 2)
+  referenceType String? // ORDER, INVOICE, PURCHASE, ADJUSTMENT, TRANSFER
+  referenceId   String?
+  note          String?
+  createdBy     String?
+  createdAt     DateTime          @default(now()) @db.Timestamptz(6)
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  creator   User?     @relation("StockMovementCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([productId])
+  @@index([warehouseId])
+  @@index([type])
+  @@index([referenceType, referenceId])
+  @@index([createdBy])
+  @@index([createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SALES & POS (4 tables)
+// ═══════════════════════════════════════════════════════════════════════
+
+model Order {
+  id             String        @id @default(uuid())
+  orderNumber    String        @unique
+  customerId     String?
+  warehouseId    String?
+  status         OrderStatus   @default(PENDING)
+  paymentStatus  PaymentStatus @default(UNPAID)
+  subtotal       Decimal       @default(0) @db.Decimal(14, 2)
+  discountAmount Decimal       @default(0) @db.Decimal(14, 2)
+  taxAmount      Decimal       @default(0) @db.Decimal(14, 2)
+  totalAmount    Decimal       @default(0) @db.Decimal(14, 2)
+  orderDate      DateTime      @default(now()) @db.Date
+  dueDate        DateTime?     @db.Date
+  notes          String?
+  createdBy      String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+
+  customer  Customer?   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  warehouse Warehouse?  @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  creator   User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  items     OrderItem[]
+  invoices  Invoice[]
+
+  @@index([orderNumber])
+  @@index([customerId])
+  @@index([warehouseId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([orderDate])
+  @@index([createdBy])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id             String   @id @default(uuid())
+  orderId        String
+  productId      String
+  productName    String // snapshot at time of order
+  productSku     String // snapshot
+  quantity       Int
+  unitPrice      Decimal  @default(0) @db.Decimal(14, 2) // sellingPrice snapshot
+  discountAmount Decimal  @default(0) @db.Decimal(14, 2)
+  taxAmount      Decimal  @default(0) @db.Decimal(14, 2)
+  lineTotal      Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  invoiceNumber  String        @unique
+  orderId        String?
+  customerId     String?
+  status         InvoiceStatus @default(DRAFT)
+  subtotal       Decimal       @default(0) @db.Decimal(14, 2)
+  discountAmount Decimal       @default(0) @db.Decimal(14, 2)
+  taxAmount      Decimal       @default(0) @db.Decimal(14, 2)
+  totalAmount    Decimal       @default(0) @db.Decimal(14, 2)
+  amountPaid     Decimal       @default(0) @db.Decimal(14, 2)
+  issuedAt       DateTime      @default(now()) @db.Date
+  dueAt          DateTime?     @db.Date
+  notes          String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+
+  order    Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  payments Payment[]
+
+  @@index([invoiceNumber])
+  @@index([orderId])
+  @@index([customerId])
+  @@index([status])
+  @@index([issuedAt])
+  @@index([dueAt])
+  @@index([createdAt])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  paymentNumber String        @unique
+  invoiceId     String
+  amount        Decimal       @default(0) @db.Decimal(14, 2)
+  method        PaymentMethod
+  status        PaymentStatus @default(PAID)
+  paidAt        DateTime      @default(now()) @db.Timestamptz(6)
+  reference     String? // transaction id, check number, etc.
+  notes         String?
+  receivedBy    String?
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+
+  invoice  Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  receiver User?   @relation(fields: [receivedBy], references: [id], onDelete: SetNull)
+
+  @@index([paymentNumber])
+  @@index([invoiceId])
+  @@index([method])
+  @@index([status])
+  @@index([paidAt])
+  @@index([receivedBy])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HRM (6 tables)
+// ═══════════════════════════════════════════════════════════════════════
+
+model Department {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  code        String     @unique
+  description String?
+  managerId   String?
+  status      UserStatus @default(ACTIVE)
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @db.Timestamptz(6)
+
+  manager      User?         @relation(fields: [managerId], references: [id], onDelete: SetNull)
+  employees    Employee[]
+  designations Designation[]
+
+  @@index([name])
+  @@index([code])
+  @@index([managerId])
+}
+
+model Designation {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  code         String   @unique
+  description  String?
+  departmentId String?
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  employees  Employee[]
+
+  @@index([name])
+  @@index([code])
+  @@index([departmentId])
+}
+
+model Employee {
+  id                String         @id @default(uuid())
+  employeeCode      String         @unique
+  firstName         String
+  lastName          String
+  email             String?        @unique
+  phone             String?
+  mobile            String?
+  dateOfBirth       DateTime?      @db.Date
+  joiningDate       DateTime       @db.Date
+  resignationDate   DateTime?      @db.Date
+  departmentId      String?
+  designationId     String?
+  managerId         String?
+  employmentType    EmploymentType @default(FULL_TIME)
+  status            EmployeeStatus @default(ACTIVE)
+  basicSalary       Decimal        @default(0) @db.Decimal(14, 2)
+  address           String?
+  city              String?
+  country           String?
+  emergencyName     String?
+  emergencyPhone    String?
+  emergencyRelation String?
+  imageUrl          String?
+  notes             String?
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
+
+  userAccount   User?
+  department    Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  designation   Designation?   @relation(fields: [designationId], references: [id], onDelete: SetNull)
+  manager       Employee?      @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  subordinates  Employee[]     @relation("EmployeeManager")
+  attendances   Attendance[]
+  leaveRequests LeaveRequest[]
+
+  @@index([employeeCode])
+  @@index([firstName, lastName])
+  @@index([email])
+  @@index([departmentId])
+  @@index([designationId])
+  @@index([managerId])
+  @@index([status])
+  @@index([joiningDate])
+}
+
+model Attendance {
+  id             String           @id @default(uuid())
+  employeeId     String
+  attendanceDate DateTime         @db.Date
+  checkInAt      DateTime?        @db.Timestamptz(6)
+  checkOutAt     DateTime?        @db.Timestamptz(6)
+  status         AttendanceStatus @default(ABSENT)
+  workHours      Decimal?         @db.Decimal(4, 2)
+  checkInNote    String?
+  checkOutNote   String?
+  metadata       Json?
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, attendanceDate])
+  @@index([attendanceDate])
+  @@index([status])
+}
+
+model LeaveType {
+  id                String     @id @default(uuid())
+  name              String     @unique
+  code              String     @unique
+  description       String?
+  defaultDays       Int        @default(10)
+  maxCarryOver      Int        @default(0)
+  requiresDocuments Boolean    @default(false)
+  status            UserStatus @default(ACTIVE)
+  createdAt         DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime   @updatedAt @db.Timestamptz(6)
+
+  leaveRequests LeaveRequest[]
+
+  @@index([name])
+  @@index([code])
+}
+
+model LeaveRequest {
+  id            String      @id @default(uuid())
+  employeeId    String
+  leaveTypeId   String
+  startDate     DateTime    @db.Date
+  endDate       DateTime    @db.Date
+  totalDays     Int
+  halfDay       Boolean     @default(false)
+  reason        String
+  status        LeaveStatus @default(PENDING)
+  approvedById  String?
+  approvedAt    DateTime?   @db.Timestamptz(6)
+  rejectReason  String?
+  supportingDoc String?
+  createdAt     DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(6)
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  approver  User?     @relation("LeaveApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId])
+  @@index([leaveTypeId])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@index([approvedById])
+}

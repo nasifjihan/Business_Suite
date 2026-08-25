@@ -6,6 +6,14 @@ Open pgAdmin 4 -> create a new database -> name: business_suite
 Add new Environment Variables: C:\Program Files\PostgreSQL\18\bin
 psql --version
 
+backend:
+npm install
+npx prisma init
+
+.env DATABASE_URL
+
+npx prisma migrate dev --name init_core_tables
 
 
+npx create-next-app@latest frontend
 
