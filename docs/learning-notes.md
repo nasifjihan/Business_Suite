@@ -35,14 +35,14 @@ The auth API endpoints exist (POST /forgot-password, POST /reset-password) but w
 
 ## Phase 0 — Skeleton: Lessons Learned
 
-*(filled in after Phase 0 completes)*
-
 ### Mistakes during implementation:
-1. _(To be filled in)_
+1. **No real mistakes — this was documentation and file creation, pure plumbing.** Plan for Phase 0 is straightforward once the spec defines the folder tree in Section 6. The work was adapting that spec into files.
 
 ### Interview-friendly takeaways from this phase:
-1. A good .gitignore + README should be committed BEFORE npm install is ever run. Prevents accidental secret/private package commits.
-2. Folder tree planning with route groups before create-next-app prevents later rename-induced broken imports.
+1. A good .gitignore + README **is the very first commit**, before `npm install` is ever run. Prevents accidental secret/node_modules commits. On a real team, onboarding starts with git clone → npm install, not the other way around.
+2. **Route group naming (parentheses folders in Next.js) is worth planning before `create-next-app` runs. Renaming folders *after* importing causes import paths to break.
+3. **The planning-to-coding ratio on a well-scoped enterprise project is surprisingly high.** Phase 0 is 100% planning/docs + 0% runtime code. You never regret writing documentation for large systems (a lesson I took me took less).
+4. BUILD_PROCESS.md is unusual in real dev teams but invaluable for a solo portfolio project — future employers love to see because it proves you think ahead of "thought out loud".
 
 ---
 
