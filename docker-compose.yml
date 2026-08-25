@@ -1,0 +1,108 @@
+# ──────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — Phase 13 (Docker Learning)
+# ──────────────────────────────────────────────────────────────────────────
+# THIS FILE IS A PHASE-13 PLACEHOLDER.
+# It will NOT work "out of the box" until Phase 13 when we:
+#   1. Add backend/Dockerfile
+#   2. Add nginx/nginx.conf + nginx/Dockerfile
+#   3. Fill in the environment variables below (or use env_file:)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Services (when complete):
+#   postgres   → PostgreSQL 16/18 container + persistent volume
+#   backend    → Node.js container (our Express API)
+#   pgadmin    → (Optional) pgAdmin 4 web UI for Postgres at http://localhost:5050
+#   nginx      → (Optional) Reverse proxy: http://localhost → frontend / + /api/* → backend
+#
+# Usage (after Phase 13):
+#   docker compose up -d
+#   docker compose logs -f backend
+#   docker compose exec backend npx prisma migrate deploy
+#   docker compose exec backend npx prisma db seed
+#   docker compose down          (stops & removes; keeps DB data because volume persists)
+#   docker compose down -v       ⚠️ DELETES postgres volume = LOST ALL DATA
+# ──────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────
+  postgres:
+    image: postgres:18-alpine                  # Matches installed version locally (18.6)
+    container_name: business-suite-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: business_suite
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123             # TODO Phase 13: match .env DATABASE_URL
+      TZ: UTC
+    ports:
+      - "5432:5432"                          # Map so host tools (Prisma) can connect
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Persistent data volume
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bs-net
+
+  # ── Backend (Express API) ─────────────────────────────────────────
+  # TODO Phase 13: Uncomment + create backend/Dockerfile first.
+  #
+  # backend:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: business-suite-backend
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   env_file:
+  #     - ./backend/.env
+  #   environment:
+  #     # Override DATABASE_URL to point at the docker 'postgres' service hostname
+  #     DATABASE_URL: postgresql://postgres:postgres123@postgres:5432/business_suite?schema=public
+  #   ports:
+  #     - "5000:5000"
+  #   networks:
+  #     - bs-net
+
+  # ── pgAdmin 4 (Optional web UI) ─────────────────────────────────────
+  # TODO Phase 13: Uncomment if you want a DB UI inside Docker.
+  #
+  # pgadmin:
+  #   image: dpage/pgadmin4:latest
+  #   container_name: business-suite-pgadmin
+  #   restart: unless-stopped
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@example.com
+  #     PGADMIN_DEFAULT_PASSWORD: Admin@123
+  #   ports:
+  #     - "5050:80"
+  #   depends_on:
+  #     - postgres
+  #   networks:
+  #     - bs-net
+
+  # ── Nginx Reverse Proxy (Optional, Phase 13) ────────────────────────────
+  # nginx:
+  #   build: ./nginx
+  #   container_name: business-suite-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - bs-net
+
+volumes:
+  postgres_data:
+    name: business-suite-postgres-data
+
+networks:
+  bs-net:
+    driver: bridge

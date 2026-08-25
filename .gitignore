@@ -1,0 +1,118 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+.yarn/install-state.gz
+bower_components/
+
+# Node logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+# Keep .env.example templates
+!.env.example
+!.env.local.example
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+.nuxt/
+.cache/
+.parcel-cache/
+
+# Next.js production build
+*.tsbuildinfo
+next-env.d.ts
+
+# Prisma
+prisma/generated/
+prisma/migrations/*_migration_tmp/
+# Do NOT ignore real migrations - unignore below line:
+
+# Test output / coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variable files
+# (already covered above, explicit for clarity)
+.deploy_git_modules
+.firebase/
+.firebase_hosting_root_*
+
+# Storybook build outputs
+.out/
+.storybook-out/
+
+# Temporary folders
+tmp/
+temp/
+
+# Docker volumes
+postgres_data/
+.pgdata/
+pgdata/
+dbdata/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Trae/AI temp files
+.trae/
+.agents/
