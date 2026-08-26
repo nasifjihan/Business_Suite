@@ -104,37 +104,43 @@ export default function DashboardLayout({
         </div>
 
         <nav className="flex-1 py-3 px-2 space-y-1 overflow-y-auto">
-          {NAV.map((it) => (
-            <PermissionGate
-              key={it.href}
-              {...(it.requires
-                ? typeof it.requires === "string"
-                  ? { one: it.requires }
-                  : it.requires)
-                : { one: "*" }}
-            >
-              <Link
-                href={it.href}
-                className={cn(
-                  "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
-                  pathname === it.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
-                )}
-              >
-                <it.icon className={cn("w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary")} />
-                {!collapsed && (
-                  <>
-                    <span className="flex-1 truncate">{it.label}</span>
-                    {it.badge && (
-                      <span className="text-[10px] rounded-full bg-primary/10 text-primary px-1.5 py-0.5 border border-primary/20">
-                        {it.badge}
-                      </span>
-                    )}
-                  </>
-                )}
-              </Link>
-            </PermissionGate>
-          ))}
+          {NAV.map((it) => {
+            let permProps:
+              | { one: string }
+              | { any: string[] }
+              | { all: string[] };
+            if (!it.requires) {
+              permProps = { one: "*" };
+            } else if (typeof it.requires === "string") {
+              permProps = { one: it.requires };
+            } else {
+              permProps = it.requires as { any: string[] } | { all: string[] };
+            }
+            return (
+              <PermissionGate key={it.href} {...permProps}>
+                <Link
+                  href={it.href}
+                  className={cn(
+                    "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+                    pathname === it.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                  )}
+                >
+                  <it.icon className={cn("w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary")} />
+                  {!collapsed && (
+                    <>
+                      <span className="flex-1 truncate">{it.label}</span>
+                      {it.badge && (
+                        <span className="text-[10px] rounded-full bg-primary/10 text-primary px-1.5 py-0.5 border border-primary/20">
+                          {it.badge}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </Link>
+              </PermissionGate>
+            );
+          })}
 
           {/* Administration drawer — shown only if user has any of users/roles/audit permissions */}
           {hasAnyAdmin && (
@@ -160,26 +166,34 @@ export default function DashboardLayout({
                 </div>
               )}
               {adminOpen &&
-                ADMIN_SUBNAV.map((sub) => (
-                  <PermissionGate
-                    key={sub.href}
-                    {...(typeof sub.requires === "string"
-                      ? { one: sub.requires }
-                      : sub.requires ?? { one: "*" })}
-                  >
-                    <Link
-                      href={sub.href}
-                      className={cn(
-                        "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
-                        collapsed ? "justify-center" : "pl-9",
-                        pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
-                      )}
-                    >
-                      <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
-                      {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
-                    </Link>
-                  </PermissionGate>
-                ))}
+                ADMIN_SUBNAV.map((sub) => {
+                  let permProps:
+                    | { one: string }
+                    | { any: string[] }
+                    | { all: string[] };
+                  if (typeof sub.requires === "string") {
+                    permProps = { one: sub.requires };
+                  } else if (sub.requires) {
+                    permProps = sub.requires as { any: string[] } | { all: string[] };
+                  } else {
+                    permProps = { one: "*" };
+                  }
+                  return (
+                    <PermissionGate key={sub.href} {...permProps}>
+                      <Link
+                        href={sub.href}
+                        className={cn(
+                          "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                          collapsed ? "justify-center" : "pl-9",
+                          pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                        )}
+                      >
+                        <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
+                        {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
+                      </Link>
+                    </PermissionGate>
+                  );
+                })}
             </>
           )}
         </nav>

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { CreateRoleDto, ListRolesQuery, UpdateRoleDto } from "./validators";
 import { applyPagination, buildPaginationMeta } from "@/utils/pagination";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
-import { AuditAction } from "@prisma/client";
+import { RoleType, AuditAction } from "@prisma/client";
 import { extractMeta, omitSensitive, writeAudit } from "@/middleware/audit";
 
 export const RoleService = {
@@ -86,7 +86,7 @@ export const RoleService = {
     const created = await prisma.$transaction(async (tx) => {
       const role = await tx.role.create({
         data: {
-          name: dto.name.toUpperCase().replace(/\s+/g, "_"),
+          name: dto.name.toUpperCase().replace(/\s+/g, "_") as unknown as RoleType,
           displayName: dto.displayName,
           description: dto.description || null,
           isSystem: false,
@@ -143,7 +143,7 @@ export const RoleService = {
       }
 
       const data: Record<string, unknown> = {};
-      if (dto.name) data.name = dto.name.toUpperCase().replace(/\s+/g, "_");
+      if (dto.name) data.name = dto.name.toUpperCase().replace(/\s+/g, "_") as unknown as RoleType;
       if (dto.displayName !== undefined) data.displayName = dto.displayName;
       if (dto.description !== undefined) data.description = dto.description || null;
 

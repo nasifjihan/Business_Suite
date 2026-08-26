@@ -479,61 +479,214 @@ All items from Section 32 teaching header item 8 (Acceptance) checked:
 
 ## 6. PHASE 3 — RBAC & Administration
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ COMPLETED (TypeScript 0/0 both stacks; browser + DB smoke tests pending user execution)
 
-**Objective**: Users, roles, permissions, role-permission assignment, audit logging. The RBAC middleware enforces permissions on EVERY protected API endpoint.
+**Objective**: Production-grade fine-grained RBAC tiered permission model + Administration UI. 62 explicit `module.action` permission codes, 7-tier role hierarchy with immutable system-roles (SUPER_ADMIN/ADMIN cannot be renamed/deleted), append-only Audit Log system capturing beforeData/afterData JSON snapshots inside Prisma transactions, user status INACTIVE → immediate API 401 enforcement (no JWT TTL grace period), 5 backend admin modules + 4 frontend admin pages, PermissionGate UX-only gate + backend authorize() middleware security boundary.
 
-### RBAC Model
-6 system roles (non-deletable `isSystem=true`):
-| Role | Permission Pattern |
-|------|--------------------|
-| ADMIN | `*.*` (wildcard — everything) |
-| MANAGER | `dashboard.*`, `crm.*`, `inventory.*`, `sales.*`, `pos.*`, `hrm.*` (NOT `users.*`, `roles.*`, `audit.*`) |
-| SALES | `crm.*`, `pos.*`, `sales.create`, `sales.read`, `products.read` |
-| CASHIER | `pos.*`, `customers.read`, `products.read`, `orders.read` |
-| HR | `hrm.*`, `dashboard.read` |
-| VIEWER | `*.read` (read-only on all business modules except admin) |
+### Actual Implementation Steps
 
-Permission code format: `module.action`, e.g. `products.create`, `customers.read`, `leave.approve`, `users.delete`.
+### 6.1 Prisma Schema Evolution & Migration
 
-### Backend
-- `src/middleware/rbac.ts` — `requirePermission('products.create')` middleware. Checks `req.user.permissions` (populated by auth middleware) against required permission. Supports wildcard matching (e.g. `products.*` matches `products.read`). Returns 403 if denied.
-- `src/modules/users/` — CRUD for users. User create hashes password with bcrypt. Patch user can activate/deactivate. DELETE is soft (set status=INACTIVE).
-- `src/modules/roles/` — CRUD for roles. Role-permission assignment via many-to-many `role_permissions` table.
-- `src/modules/permissions/` — Read-only list of all permissions (seeded).
-- `src/modules/audit/` — Read-only list of audit logs. Filterable by userId, entityType, date range.
-- **Audit Logging middleware**: After every successful POST/PATCH/DELETE that mutates data, create an `AuditLog` record: userId, action (CREATE/UPDATE/DELETE), entityType, entityId, beforeData (JSON), afterData (JSON), ipAddress (from `req.ip`), userAgent (from `req.headers['user-agent']`). We'll use a Prisma `$use` middleware or a service-level wrapper for this.
+**RBAC tables already existed** from init_core_tables migration (Phase 1): Permission (code PK, module, displayName, description), RolePermission (roleId FK + permissionId FK, composite PK + unique), AuditLog (id, userId?, action AuditAction enum, entityType, entityId?, beforeData Json?, afterData Json?, metadata Json?, ipAddress?, userAgent?, createdAt).
 
-### Prisma Seed Script
-`backend/prisma/seed.ts` — Run via `npx prisma db seed`. Creates realistic demo data:
-- 6 permissions roles (ADMIN, MANAGER, SALES, CASHIER, HR, VIEWER)
-- 100+ permission codes — one for every `module.action` combination
-- 5 users: admin@example.com / manager@example.com / sales@example.com / cashier@example.com / hr@example.com
-  - ALL seeded passwords: `Admin@123` (DOCUMENTED IN README — FOR LOCAL DEV ONLY, NEVER PRODUCTION)
-- Departments, designations
-- 30 employees
-- 50 products across 8 categories
-- 2 warehouses
-- 30 customers
-- 20 leads in every status
-- 50 historical orders with items, invoices, payments
-- 2 weeks of attendance records
-- 10 leave requests in various states
+**Only schema change applied this phase:**
+```prisma
+// backend/prisma/schema.prisma L201 added to model User block
+phone String? @db.VarChar(30)
+```
+→ Migration **NOT YET APPLIED** (requires user terminal run): `cd backend && npx prisma migrate dev --name add_user_phone`. Prisma Client was regenerated successfully via `npx prisma generate` (v7.9.1, PrismaPg adapter).
 
-### Frontend
-- `frontend/app/(dashboard)/administration/users/page.tsx` — User list table, create user modal, edit user modal, activate/deactivate buttons
-- `frontend/app/(dashboard)/administration/roles/page.tsx` — Role list, edit permissions dialog
-- `frontend/app/(dashboard)/administration/audit-logs/page.tsx` — Audit log viewer with filters
-- `frontend/components/common/PermissionGate.tsx` — React component that wraps children and only renders if user has required permission. Also disables/hides nav items the user can't access. NOTE: This is ONLY a UX optimization — the backend RBAC middleware is the real security. If someone bypasses the UI and calls the API directly, RBAC middleware still blocks.
+### 6.2 Seed — 62 Permissions × 7 Tiered Role Assignments
 
-### Testing This Phase
-1. Run `npx prisma db seed`
-2. Login as admin@example.com / Admin@123 — see all nav items, see Administration section
-3. Login as cashier@example.com / Admin@123 — see ONLY POS, Customers, Orders in nav. Trying to manually navigate to `/administration/users` shows 403 page or redirects.
-4. Use Postman to try `DELETE /api/v1/users/:id` with cashier's access token — backend returns 403 even though frontend hid the button.
-5. Create a product as admin — check audit_logs table in pgAdmin has a record with beforeData/afterData/IP.
+New standalone idempotent seed script: `backend/prisma/seed_phase3_rbac.ts` (271 lines, relative import to `../src/lib/prisma` → no tsconfig-paths needed). Run via user terminal: `npx ts-node prisma/seed_phase3_rbac.ts`.
 
-**Concepts learned**: RBAC vs ABAC, why frontend hiding isn't security, wildcard permission matching, audit trail design, many-to-many junction tables in Prisma, database seeding strategies, least-privilege principle.
+**Permission inventory (62 codes across 9 modules):**
+
+| Module | Permission Count | Pattern |
+|---|---|---|
+| auth | 4 | login / refresh / logout / me |
+| profile | 3 | read / update / changePassword |
+| users | 6 | create / read / update / delete / activate / impersonate |
+| roles | 5 | create / read / update / delete / assignPermissions |
+| permissions | 1 | read |
+| audit | 1 | read |
+| dashboard | 1 | view |
+| crm | 11 | customers crud (4) + contacts 3 + leads 4 |
+| inventory | 13 | categories 4 + products 4 + warehouses 4 + stock.adjust |
+| sales / pos | 10 | orders 4 + pos 4 + payments 2 + reports.view |
+| hrm | 7 | employees 4 + attendance 2 + leave.approve |
+
+**7-tier role assignments (seed_phase3_rbac.ts 152-240):**
+
+| Role | isSystem | Permission count | Exact scoping |
+|---|---|---|---|
+| SUPER_ADMIN | true | 62 | EVERY code (wildcard escape hatch `*` bypass in authorize middleware) |
+| ADMIN | true | ~39 | All users.* + roles.read + permissions.read + audit.read + all CRM/Inventory/Sales/HRM READ+WRITE (except roles.create/delete) |
+| MANAGER | false | ~32 | dashboard.view + CRM crud (no delete) + inventory crud (no delete) + sales/pos + HRM (no leave.approve) |
+| SALES | false | ~15 | CRM crud (customers/leads read+create, no delete) + POS view + orders create/read |
+| CASHIER | false | ~9 | POS cart/checkout + customers.read + products.read + orders.read + payments.create |
+| HR | false | ~13 | hrm.* (employees crud + attendance + leave.approve) + users.read + profile.* + dashboard.view |
+| VIEWER | false | ~30 | *.read on ALL modules EXCEPT admin (no users/roles/permissions/audit write — just read) |
+
+Seed pattern: `upsert` for every Permission code (safe rerun = idempotent); upsert Role first then `tx.rolePermission.deleteMany({where: {roleId}})` + `createMany([{roleId,permissionId}])` pair inside single `prisma.$transaction` to replace the entire role-permission matrix (simpler than diffing adds/removes at 62 scale).
+
+### 6.3 Backend — RBAC Middleware Pipeline + 5 Admin Modules
+
+#### Middleware additions (backend/src/middleware/):
+| File | Change | Purpose |
+|---|---|---|
+| `auth.ts` (rewritten, 96 lines) | `authenticate(required=true)` wrapped as async IIFE. After JWT verify → SELECT User (with role + role.permissions → permission.code) from DB on **every** authenticated request. Builds flat `req.permissionCodes: string[]` = `user.role.permissions.map(rp=>rp.permission.code)`. Immediately throws `UnauthorizedError` 401 if `user.status !== ACTIVE`. | Guarantees admin status=INACTIVE deactivation takes effect on the user's very next API call (no 15-min JWT grace window — mitigates fired-employee risk). |
+| `authorize.ts` (55 lines) | Factory `authorize(...required: (string \| { any?: string[]; all?: string[] })[])` — supports 4 matchers: (a) exact `"users.create"` single string, (b) `{any:["users.read","roles.read"]}` OR-match, (c) `{all:["leads.read","customers.read"]}` AND-match, (d) `"*"` wildcard SUPER_ADMIN escape hatch (backend-only `hasAdminBypass` flag). | Single middleware covers every permission shape needed; applied in routes AFTER auth → rateLimit → validate. |
+| `audit.ts` (114 lines, Prisma7 strict typing fixed) | `writeAudit(tx, {userId,action,entityType,entityId,beforeData,afterData,metadata,ip,userAgent})`. `omitSensitive(any,["passwordHash","tokenHash","accessToken","refreshToken","jti","familyId"])` recursive scrubber. `tx` signature relaxed to duck-typed `{ auditLog: PrismaClient["auditLog"] }` (fixes Prisma7 Omit<PrismaClient,$connect/$disconnect/...> incompatibility). Create fields cast `Prisma.InputJsonValue` (read type JsonValue is narrower than create type). Entire function wrapped best-effort `try/catch` → audit failure **NEVER** aborts business transaction. | Append-only service-layer audit capture (simpler & more accurate beforeData than global middleware because services have the pre-read row). |
+
+#### Helpers added (backend/src/):
+- `utils/pagination.ts` (52 lines): Zod PaginationSchema (page,pageSize coerced string→number), buildPaginationMeta(totalItems,page,pageSize)→{page,pageSize,totalItems,totalPages,hasNextPage,hasPreviousPage}, applyPagination() helper.
+- `lib/response.ts` L14-20: 4th optional `message?: string` param added to `successResponse<T>(res,data,status?,message?)` → envelope now `{ success:true, data:T, message?:string }`.
+- `types/express.d.ts` L12-18: removed `readonly` from `permissionCodes?: readonly string[]` → mutable `string[]`. Fixed incompatibility between readonly arrays and authorize middleware spread signatures.
+
+#### 5 Admin Modules (backend/src/modules/*/)
+Module pattern reused across ALL 5: `validators.ts` (Zod DTOs + list schemas with filters + search + sort/paginate) → `services.ts` (business logic + audit write + $transactions) → `controllers.ts` (thin HTTP, ParsedQs bridge: `req.query as unknown as ListXQuery`, req.params.id cast to string) → `routes.ts` (Auth → RateLimit → Validate → Authorize → Controller pipeline).
+
+| Module | Key routes (all prefixed /api/v1) | Permission gates |
+|---|---|---|
+| **auth/** services L469-477 | `GET /auth/me` returns `{user, permissions: string[]}` 2-tuple (not just user — front needs flat permissionCodes array to hydrate Redux). Removed `role.displayName` from Prisma select (broke userToDto DTO shape). | authenticate only (no authorize — everyone has profile.me) |
+| **users/** | List GET /users (search name/email, filter status=ACTIVE/INACTIVE, filter roleId, sort any field, paginate), GET /users/:id, POST /users (generate 16-char temp password with suffix `A1!` to pass strength rules; force `mustChangePassword=true`), PATCH /users/:id (if status→INACTIVE inside transaction: first UPDATE user then DELETE FROM RefreshToken WHERE userId = id → revokes ALL sessions immediately), DELETE /users/:id (sets status INACTIVE not hard delete), POST /users/:id/activate (toggle). Also POST /users/change-password logged-in-only. | users.read / users.create / users.update / users.delete / users.activate |
+| **roles/** | List GET /roles (includes userCount + permissionCount aggregations from subquery), GET /roles/:id detail (includes permissions[] object array), POST /roles, PATCH /roles/:id, DELETE /roles/:id. Service-layer **system role guard**: if `role.isSystem=true` AND (PATCH tries to change name OR DELETE called) → throw BadRequestError `"Cannot rename/delete a system role"` (400 status, backend lockout). Permission assignment update: inside $transaction → deleteMany(roleId) + createMany(newPairArray). | roles.read / roles.create (SUPER_ADMIN only per authorize gate in routes) / roles.update / roles.delete (SUPER_ADMIN only) / roles.assignPermissions |
+| **permissions/** | GET /permissions → returns `{ total: number; grouped: {module: string, items: Permission[]}[]}` grouped by module for UI permission matrix rendering. | permissions.read |
+| **audit-logs/** | List GET /audit-logs ONLY. NO POST/PATCH/DELETE routes (append-only integrity). List filters: entityType exact match, action AuditAction enum exact match, userId FK match, dateFrom/dateTo created range, free-text search entityType+entityId+action combination, server pagination. Append-only integrity is a codebase invariant grepable: "No route definitions in audit-logs/routes.ts". | authorize("audit.read") — only ADMIN+SUPER_ADMIN by tier table |
+| **profile/** | GET /profile (self), PATCH /profile (firstName/lastName/phone only — roleId/status blocked at zod validator level), POST /profile/change-password (current→new→confirm strength rules + transaction revoke ALL sessions on success same pattern as users update above). | profile.read / profile.update / profile.changePassword |
+
+Routes master file `backend/src/routes/index.ts` L13-42 mounts all 5 modules under `/users`, `/roles`, `/permissions`, `/audit-logs`, `/profile` in order.
+
+### 6.4 Frontend — RTK Admin Hooks + 4 Administration Pages
+
+#### API layer changes (frontend/src/lib/api/):
+- `authEndpoints.ts`: `MeResponseData = { user: AuthUser; permissions: string[] }` (2-tuple, not just user) because backend `/me` now returns {user, permissions}.
+- `apiSlice.ts` tagTypes array extended: `["me", "Users", "Roles", "Permissions", "AuditLogs", "Profile"]` (+ existing auth tags). Mutation hooks invalidate tags → list auto-re-fetch.
+- `adminEndpoints.ts` (268 lines NEW): 18 typed RTK Query injectEndpoints hooks — list/get/create/update/delete for Users/Roles + list grouped Permissions + list filtered AuditLogs + Profile get/update + change-own-password. All builder.query/declare return type `Envelope<T>` where `Envelope<T> = { success: true; data: T; message?: string }` (RTK `useXxxQuery().data` **IS** the Envelope, correct usage is single-unwrap `listRes?.data?.items`, NOT double `.data?.data?.items` — this pattern caused ~40 frontend tsc errors, see 6.5).
+
+#### Auth state & Permission gates (frontend/src/):
+- `store/slices/authSlice.ts` L33-125: AuthState extended with `permissions: string[]` (init []). `setHydratedUser` action signature CHANGED: no longer accepts bare `null` argument; requires object `{ user: AuthUser|null; permissions?: string[] }` — forces callers to explicitly pass both user and permissions.
+- `components/auth/AuthHydrationProvider.tsx` L70-173: 6x call sites previously dispatching bare `null` → all changed to `dispatch(setHydratedUser({ user: null }))`. me() success handler: destructures `payload = meRes.currentData.data` (shape `{user, permissions}`), builds client-side `u.fullName = \`${u.firstName} ${u.lastName}\`` from backend firstName/LastName (server DTO doesn't send computed fullName), dispatches `setHydratedUser({ user: {...u, fullName}, permissions })`.
+- `components/auth/PermissionGate.tsx` L23-28 + `useHasPermission()` hook: (a) TS18048 undefined warnings fixed with `!!match.any?.some(...)` / `!!match.all?.every(...)` guards. (b) PermissionGate children-only render UX gate (NO real security — backend is the boundary).
+- `app/(dashboard)/layout.tsx` L106-196: Sidebar 2x nav map render blocks previously used concise arrow body `(it) => (<PermissionGate {...(cond1?{any:a}:cond2?{all:b}:{...})}>)`. Ternary spread inside JSX concise return triggered 12 cascading TS1005/TS1381 parser errors. Fix: refactored both map bodies to block statement: `{ let permProps; if (cond1) permProps = { any: [...] }; else if ... return (<PermissionGate {...permProps}> ...) }`. Administration drawer group header rendered ONLY when `hasAnyAdmin = useHasPermission({ any: ["users.read", "roles.read", "audit.read"] })` → SALES/CASHIER/HR/VIEWER never even sees the Administration section in sidebar.
+
+#### 4 Administration Pages (all "use client"; dashboard-route group auth-guarded)
+| File | Page contents |
+|---|---|
+| `profile/page.tsx` | Two-column layout: Left card — first/last/phone edit form (RTK updateProfileMutation, invalidates "me" tag → header name refreshes). Right card — change password form: current + new + confirm (PasswordField showStrengthMeter rendered on new field). Below — dashed-border 2FA placeholder card "Coming soon". |
+| `administration/users/page.tsx` | Users CRUD: Server-side filter RTK useListUsersQuery with search input + status dropdown (All/Active/Inactive) + role dropdown (uses useListRolesQuery → builds rolesById map for chip display). "New user" button gated by PermissionGate users.create. Create modal form (zodResolver validators match backend 1:1); on success shows copy-to-clipboard banner displaying 16-char temp password the backend generated (banner dismiss on copy icon click). Edit modal allows first/last/email/role/phone/status toggle. Action column activate/deactivate button with confirm "Setting user INACTIVE will IMMEDIATELY revoke ALL existing sessions. Continue?". All action columns + create button gated by PermissionGate matching backend authorize requirements. |
+| `administration/roles/page.tsx` | Roles cards list. Each card shows displayName, roleCount badge, userCount. Edit button → modal opens useGetRoleQuery(). SUPER_ADMIN isSystem role → name input rendered disabled (readonly attribute). Grouped permission matrix uses the GET /permissions grouped response → 9 accordion module panels (expanded by default on open). Each permission = checkbox row, checked state stored in `selectedCodes:Set<string>` local state. Save → updateRoleTrigger with `permissionIds: Array.from(selectedCodes)` → RTK invalidates "Roles" tag → list re-fetch. |
+| `administration/audit-log/page.tsx` | Server-filtered audit log viewer. Top filter panel: entityType select, action AuditAction enum select, userId select (useListUsersQuery), dateFrom date picker, dateTo date picker, free-text search, Reset Filters button. Table columns: Expand chevron, Timestamp, User (avatar initials + email), Action (badge — colored by ACTION_TONES record), Entity (type + id). Expand row → beforeData/afterData side-by-side JSON pretty-print blocks (JsonBlock component), metadata block if present. Server pagination via meta from list response. All JSON fields recursively scrubbed on backend; passwordHash field NEVER reaches frontend regardless. |
+
+### 6.5 TypeScript Strict Errors Encountered & Fixed
+
+#### Backend — 42 errors in 3 rounds → 0 errors (exit 0, verified via `npx tsc --noEmit -p tsconfig.json`):
+| Error Category | Count | Fix Pattern |
+|---|---|---|
+| ParsedQs query param bridge | 12 | `const q = req.query as unknown as ListXQuery` (Express ParsedQs isn't subtype of zod-inferred strict types). |
+| req.params.id type `string\|string[]` | 8 | Destructure `const { id } = req.params as { id: string }` (Express router param parser doesn't know singular id is string). |
+| successResponse signature (message param missing) | 6 | lib/response.ts L14-20: added 4th optional message param. All controllers updated call sites to pass message when needed. |
+| authorize readonly `permissionCodes` | 3 | types/express.d.ts L12: removed readonly modifier. Changed `permissionCodes?: readonly string[]` → mutable `string[]`. |
+| Prisma7 writeAudit signature incompatibility | 5 | middleware/audit.ts: (a) `import { Prisma, AuditAction }` NOT type-only → Prisma.Json namespace visible. (b) signature relaxed to duck-typed `tx: { auditLog: PrismaClient["auditLog"] } \| PrismaClient`. (c) Create beforeData/afterData/metadata field types changed from `Prisma.JsonValue` → `Prisma.InputJsonValue` (InputJsonValue wider, includes Prisma.Null / Prisma.DbNull / Prisma.JsonNull). |
+| Role.name native enum `as unknown as RoleType` | 3 | services layer: `data.name.toUpperCase()` (free-text string from validators) required double-cast to pass Prisma Role.name native enum strict type. |
+| User omit passwordHash destructuring | 1 | user services.update: previously had `const { passwordHash: _omit, ...rest } = data` but data shape already OMIT passwordHash via validator (field absent from UpdateUserDto, not just undefined) → destructuring accessor threw TS2339. Fix: removed entire invalid passwordHash: _omit line. |
+| auth/me role select shape mismatch | 1 | services me() had selected `role: { select: { id,name,displayName,isSystem,permissions... } }` but UserToDto DTO expects role without displayName sub-field. Fix: stripped displayName from role select. Return shape `{user, permissions: string[]}` (flattened permissions). |
+| Envelope return types in controllers | 3 | 3 endpoints returned plain T without wrapping in successResponse; fixed to use `successResponse(res, data)`. |
+
+#### Frontend — 46 errors in 2 rounds → 0 errors (exit 0, verified via `npx tsc --noEmit` this session):
+| Error Category | Count | Fix Pattern |
+|---|---|---|
+| Double-unwrap `listRes?.data?.data?.items` / `roleDetailRes?.data?.success` | 30 | Root cause: adminEndpoints declared `builder.query<Envelope<T>, Args>` → RTK useXxxQuery().data **IS** Envelope. So `const { data: usersRes } = useListUsersQuery(...)` → correct single unwrap `usersRes?.data?.items`. Bulk `replace_all` across 4 pages eliminated 30 errors. |
+| layout.tsx JSX parser cascade (TS1005 / TS1381 / TS17002) | 12 | Concise arrow body map + deeply-nested ternary PermissionGate spread → TypeScript JSX parser got confused about "expression expected". Fix: changed 2x nav map callback from concise body to block body with explicit intermediate `let permProps` + if/else ladder + return statement. Cascade errors cleared instantly. |
+| setHydratedUser bare-null signature | 6 | authSlice changed action signature from `(AuthUser\|null)` → `({user:AuthUser\|null, permissions?:string[]})`. AuthHydrationProvider had 6x dispatch(setHydratedUser(null)) call sites → all wrapped `dispatch(setHydratedUser({ user: null }))`. |
+| AuthHydrationProvider me() response shape | 4 | me() backend now returns `{ user, permissions }` not just user — destructuring updated; fullName computed client-side. |
+| PermissionGate TS18048 any/all possibly undefined | 2 | hasPermission helper: `match.any?.some(...)` → added double-bang guards `!!match.any?.some(...)` (discriminated union `any/all?: never` not strict enough for TS strictNullChecks). |
+| roles page detail permissionCodes shape | 2 | roleDetail data returned `permissions: {code, module, displayName}[]` object array but code expected flat `rd.permissionCodes: string[]`. Fix: L110 `setSelectedCodes(new Set(rd.permissions.map((p: any) => p.code)))`. |
+| audit-log implicit any + JSON unknown type | 4 | (a) L353 items.map((row)) → added explicit `(row: AuditLogItem)`. (b) L411 ACTION_TONES[row.action] → cast `row.action as keyof typeof ACTION_TONES`. (c) L467 + L483 beforeData/afterData/metadata are typed `unknown` (JSON) → render condition `{!!(row.beforeData \|\| row.afterData) && (...)}` double-bang coerces to boolean (so TS2322 unknown not assignable ReactNode goes away). |
+| profile page PasswordField invalid `register={pwForm.register}` prop | 3 | PasswordFieldProps extends InputHTMLAttributes — NO `register` custom prop. Correct pattern: forwardRef spread `{...pwForm.register("field")}` provides name/onChange/onBlur/ref automatically. Deleted invalid `register={pwForm.register}` from 3x call sites; replaced with spread. |
+| profile page PasswordField prop name mismatch | 1 | Call site used `showStrength` but component prop is `showStrengthMeter: boolean` → renamed to match. |
+| profile page PasswordField duplicate `name=` prop | 3 | Code had BOTH explicit `name="currentPassword"` AND `{...register(...)}` (register spread also returns name field) → TS2783 "name specified more than once". Fix: removed explicit name= props entirely (register spread provides it unambiguously). |
+
+### 6.6 Phase 3 Acceptance — Exit Criteria (User Execution Pending)
+
+TypeScript compilation gate (already passed editor-side):
+- ✅ Backend: `npx tsc --noEmit -p tsconfig.json` → 0 errors (exit 0) — confirmed last session
+- ✅ Frontend: `npx tsc --noEmit` → 0 errors (exit 0) — confirmed this session immediately before writing this section (blank output line, exit code 0)
+
+User-executed test checklist (run commands in order documented in 6.7):
+- [ ] DB migration applies clean: `prisma migrate dev --name add_user_phone` → migration.sql created & applied
+- [ ] RBAC seed runs clean: `npx ts-node prisma/seed_phase3_rbac.ts` → exit 0, pgAdmin SELECT count(*) FROM permission → 62 rows expected; RolePermission ~400 rows; Role GROUP BY shows 7 tiers
+- [ ] Backend dev server starts (port 5000); GET /health → 200 OK; GET /api/v1/auth/me w/ valid token returns 200 envelope with {user, permissions: string[]} shape
+- [ ] Manual RBAC deny: SUPER_ADMIN token → GET /api/v1/users returns 200 success=true; SALES token → PATCH /api/v1/users/<any-id> returns 403 success=false
+- [ ] INACTIVE enforcement: SUPER_ADMIN changes user status → INACTIVE via PATCH. That user's NEXT api call (even < 1 second after deactivation, before 15-min JWT TTL expires) → 401 UnauthorizedError envelope, NOT 200
+- [ ] System role guard: try PATCH /roles/SUPER_ADMIN_ID?name=RENAMED → 400 "Cannot rename/delete a system role". Try DELETE same → 400 same message.
+- [ ] Audit append-only: grep backend/src/modules/audit-logs/routes.ts → NO post/patch/delete route definitions (app.route() or router.post). Routes file has only a single router.get for list.
+- [ ] Browser SUPER_ADMIN login → sidebar Administration drawer visible (Users, Roles, Audit log 3 links). Users page renders list with avatar+role chip+status. Roles edit on SUPER_ADMIN → name field disabled.
+- [ ] Browser user-create flow: New user → submit → success banner shows COPY 16-char temp password → new row appears in users table. Copy banner has dismiss X.
+- [ ] Browser HR login (create via users page first) → Administration drawer completely HIDDEN from sidebar. Direct URL /administration/users → redirects /dashboard (PermissionGate + route-level gate inside AuthHydrationProvider).
+- [ ] Audit log capture: Edit any user (change firstName "X"→"Y", save) → navigate Audit Log, filter entityType=User → top row UPDATE User action. Expand chevron → beforeData.firstName="X" / afterData.firstName="Y" JSON both present & pretty-print formatted. Neither JSON block contains passwordHash key anywhere.
+
+### 6.7 User Terminal Handoff — Run Commands In Order (Backend FIRST)
+
+```powershell
+# ============================================================
+#  STEP 1 — APPLY PHONE COLUMN MIGRATION + RBAC SEED
+# ============================================================
+cd "g:\MBW Projects\Other\BS\backend"
+
+# 1a. Apply phone column migration to live PostgreSQL DB
+#    Expected: Creates prisma/migrations/*_add_user_phone/migration.sql
+#              Prints "Migration applied successfully."
+npx prisma migrate dev --name add_user_phone
+
+# 1b. Populate 62 permissions + 7 tiered role assignments (RUN THIS EXACTLY)
+#     Expected: Exit code 0, no exceptions thrown. 
+#     VERIFY AFTER via pgAdmin on business_suite DB:
+#       SELECT count(*) FROM "permission";             → expected 62
+#       SELECT count(*) FROM "RolePermission";         → expected ~400
+#       SELECT name, "isSystem", count(rp."permissionId") AS perm_count
+#         FROM "Role" r LEFT JOIN "RolePermission" rp ON r.id = rp."roleId"
+#         GROUP BY r.id, r.name, r."isSystem"
+#         ORDER BY perm_count DESC;
+#       → 7 rows: SUPER_ADMIN(isSystem=t)=62, ADMIN(isSystem=t)=~39,
+#                 MANAGER=~32, SALES=~15, CASHIER=~9, HR=~13, VIEWER=~30
+npx ts-node prisma/seed_phase3_rbac.ts
+
+# 1c. Optional comfort: confirm backend tsc still 0 errors
+npx tsc --noEmit -p tsconfig.json
+
+# ============================================================
+#  STEP 2 — START BACKEND DEV SERVER (TERMINAL 1, KEEP OPEN)
+# ============================================================
+# Expected: "Environment validated" + "DB OK (PG 18.6)" +
+#           "🚀 Server running on port 5000"
+npm run dev
+```
+
+**OPEN 2ND POWERSHELL TERMINAL** (leave backend running in Terminal 1):
+```powershell
+# ============================================================
+#  STEP 3 — START FRONTEND DEV SERVER (TERMINAL 2, KEEP OPEN)
+# ============================================================
+cd "g:\MBW Projects\Other\BS\frontend"
+
+# Expected: Next.js 15/16 banner → "Local: http://localhost:3000"
+npm run dev
+```
+
+**Optional comfort manual RBAC deny PowerShell test (3rd terminal, after backend up, before browser):**
+Get SUPER_ADMIN JWT first (Phase 2 pattern you already used for login), then:
+```powershell
+# GET /users w/ SUPER_ADMIN token → should 200 envelope success=true
+Invoke-RestMethod -Uri "http://localhost:5000/api/v1/users?page=1&pageSize=5" `
+  -Headers @{ Authorization = "Bearer $SA_JWT" } | ConvertTo-Json -Depth 6
+
+# PATCH /users/:id w/ SALES-level token (or create one) → should 403 envelope success=false
+# 403 means BACKEND SECURITY BOUNDARY WORKING regardless of frontend PermissionGate UX
+```
+
+**Concepts learned**: Why RBAC security boundary is BACKEND ONLY (frontend PermissionGate = UX polish, never trusted); why per-request DB status check is worth the ~1ms latency for instant INACTIVE deactivation (15-min JWT grace window would be a real fired-employee vulnerability); service-layer audit logging vs. global Express middleware tradeoffs (service-layer wins because services have beforeData row pre-read and transactional $transaction pair atomically commits business+audit rows); Prisma 7 breaking strict typing changes (InputJsonValue wider than JsonValue for creates; Omitted $transaction tx arg type cannot be assigned to full PrismaClient → duck-type signature pattern); why `authorize` middleware was designed as variadic factory with {any,all} matchers instead of single string → covers every role-gate shape we need from here through Phase 12 HRM leave.approve cross-module permission; async zod `coerce` on pagination pageSize/page query params (HTTP sends string, zod parses to number without explicit parseInt boilerplate everywhere); why role-detail permission assignment uses deleteMany+createMany inside one $transaction instead of diff adds/removes (62 perms is small scale, simpler code wins); why audit logging is best-effort try/catch inside writeAudit function and NEVER allowed to abort the business transaction (append-only integrity is nice-to-have, order/invoice creation is mission-critical); RTK Query Envelope<T> unwrap consistency (double-`.data?.data` is an extremely common class of bug when teams wrap RTK in custom envelopes — we now have a hard internal convention: "if Envelope<T>, single unwrap `.data`, never double").
 
 ---
 

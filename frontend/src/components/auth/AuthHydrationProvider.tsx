@@ -79,10 +79,10 @@ function useHydrateAuth() {
           setMeTrigger(true);
         } else {
           // Refresh failed = user NOT logged in. Finalize state.
-          dispatch(setHydratedUser(null));
+          dispatch(setHydratedUser({ user: null }));
         }
       } catch (e) {
-        dispatch(setHydratedUser(null));
+        dispatch(setHydratedUser({ user: null }));
       }
     })();
     return () => {
@@ -94,11 +94,13 @@ function useHydrateAuth() {
   // 2. Once /me returns with user data, populate it.
   useEffect(() => {
     if (meRes.currentData?.success && meRes.currentData.data) {
-      const u = meRes.currentData.data;
+      const payload = meRes.currentData.data;
+      const u = payload.user;
+      const fullName = `${u.firstName} ${u.lastName}`.trim();
       dispatch(
         setHydratedUser({
-          ...u,
-          fullName: `${u.firstName} ${u.lastName}`.trim(),
+          user: { ...u, fullName },
+          permissions: payload.permissions ?? [],
         })
       );
     }
@@ -129,7 +131,7 @@ export default function AuthHydrationProvider({ children }: { children: ReactNod
       pathname === "/forgot-password" ||
       pathname === "/reset-password";
     if (onPublicAuth) {
-      dispatch(setHydratedUser(null));
+      dispatch(setHydratedUser({ user: null }));
       return;
     }
 
@@ -160,10 +162,10 @@ export default function AuthHydrationProvider({ children }: { children: ReactNod
           }));
           setMeTrigger(true);
         } else {
-          dispatch(setHydratedUser(null));
+          dispatch(setHydratedUser({ user: null }));
         }
       } catch {
-        dispatch(setHydratedUser(null));
+        dispatch(setHydratedUser({ user: null }));
       }
     })();
     return () => { cancelled = true; };

@@ -14,9 +14,10 @@ import type { Response } from "express";
 export function successResponse<T>(
   res: Response,
   data: T,
-  status = 200
-): Response<{ success: true; data: T }> {
-  return res.status(status).json({ success: true, data });
+  status = 200,
+  message?: string,
+): Response<{ success: true; data: T; message?: string }> {
+  return res.status(status).json({ success: true, data, message });
 }
 
 export function successResponsePaginated<T>(

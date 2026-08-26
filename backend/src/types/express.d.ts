@@ -12,7 +12,7 @@ declare global {
     interface Request {
       user?: AuthenticatedUser;
       // Phase 3 RBAC middleware attaches permissionCodes[] here:
-      permissionCodes?: readonly string[];
+      permissionCodes?: string[];
       // Audit logger middleware attaches requestId for correlation:
       requestId?: string;
     }

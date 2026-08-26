@@ -470,7 +470,7 @@ export const AuthService = {
       user: userToDto({
         ...row,
         role: row.role
-          ? { id: row.role.id, name: row.role.name, displayName: row.role.displayName }
+          ? { id: row.role.id, name: row.role.name }
           : null,
       }),
       permissions,

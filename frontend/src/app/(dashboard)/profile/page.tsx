@@ -66,7 +66,7 @@ export default function ProfilePage() {
     isFetching: profileLoading,
     refetch,
   } = useGetProfileQuery();
-  const profile = profileRes?.data?.data as ProfileValues & { email?: string; avatarUrl?: string | null } | undefined;
+  const profile = profileRes?.data as ProfileValues & { email?: string; avatarUrl?: string | null } | undefined;
 
   const [updateTrigger, updateState] = useUpdateProfileMutation();
   const [changePwTrigger, changePwState] = useChangeOwnPasswordMutation();
@@ -266,25 +266,22 @@ export default function ProfilePage() {
           >
             <PasswordField
               label="Current password"
-              register={pwForm.register}
-              name="currentPassword"
               error={pwForm.formState.errors.currentPassword?.message}
               placeholder="Enter your current password"
+              {...pwForm.register("currentPassword")}
             />
             <PasswordField
               label="New password"
-              register={pwForm.register}
-              name="newPassword"
               error={pwForm.formState.errors.newPassword?.message}
               placeholder="At least 8 characters, upper, lower, digit, special"
-              showStrength
+              showStrengthMeter
+              {...pwForm.register("newPassword")}
             />
             <PasswordField
               label="Confirm new password"
-              register={pwForm.register}
-              name="confirmPassword"
               error={pwForm.formState.errors.confirmPassword?.message}
               placeholder="Type new password again"
+              {...pwForm.register("confirmPassword")}
             />
 
             {changePwState.isSuccess && (

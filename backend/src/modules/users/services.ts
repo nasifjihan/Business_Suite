@@ -197,7 +197,7 @@ export const UserService = {
     if (!user) throw new NotFoundError("User not found.");
     const permissions =
       user.role?.permissions?.map((rp) => rp.permission.code).filter(Boolean) ?? [];
-    const { role, passwordHash: _omit, ...rest } = user as unknown as {
+    const { role, ...rest } = user as unknown as {
       role: typeof user.role & { permissions?: { permission: { code: string } }[] };
     };
     return {

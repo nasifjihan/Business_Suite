@@ -21,8 +21,8 @@
  *     return after;
  *   });
  */
+import { Prisma, AuditAction } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
-import { AuditAction } from "@prisma/client";
 
 const SENSITIVE_FIELDS = new Set([
   "passwordHash",
@@ -68,7 +68,7 @@ export type AuditWriteArgs = {
  * (recommended — commit atomically with data change) or the global prisma.
  */
 export async function writeAudit(
-  tx: Omit<PrismaClient, "$connect" | "$disconnect" | "$transaction" | "$on" | "$use"> | PrismaClient,
+  tx: { auditLog: PrismaClient["auditLog"] } | PrismaClient,
   args: AuditWriteArgs,
 ) {
   // Caller already passed through omitSensitive if they wanted — but double-guard.
@@ -81,9 +81,9 @@ export async function writeAudit(
         action: args.action,
         entityType: args.entityType,
         entityId: args.entityId ?? null,
-        beforeData: (before as unknown as Prisma.JsonValue) ?? null,
-        afterData: (after as unknown as Prisma.JsonValue) ?? null,
-        metadata: (args.metadata as unknown as Prisma.JsonValue) ?? null,
+        beforeData: (before as unknown as Prisma.InputJsonValue) ?? undefined,
+        afterData: (after as unknown as Prisma.InputJsonValue) ?? undefined,
+        metadata: (args.metadata as unknown as Prisma.InputJsonValue) ?? undefined,
         ipAddress: args.ip ?? null,
         userAgent: args.ua ?? null,
       },

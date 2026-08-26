@@ -198,6 +198,7 @@ model User {
   passwordHash       String
   firstName          String
   lastName           String
+  phone              String?    @db.VarChar(30)
   avatarUrl          String?
   status             UserStatus @default(ACTIVE)
   mustChangePassword Boolean    @default(true)

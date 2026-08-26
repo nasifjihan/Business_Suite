@@ -20,23 +20,24 @@ export type PermissionMatch =
   | { all: string[]; any?: never }
   | { one: string };
 
-function hasPermission(codes: string[], match: PermissionMatch): boolean {
-  if (codes.includes("*")) return true;
-  if ("one" in match) return codes.includes(match.one);
-  if ("any" in match) return match.any.some((c) => codes.includes(c));
-  if ("all" in match) return match.all.every((c) => codes.includes(c));
+function hasPermission(codes: string[] | undefined | null, match: PermissionMatch): boolean {
+  const safe: string[] = Array.isArray(codes) ? codes : [];
+  if (safe.includes("*")) return true;
+  if ("one" in match) return safe.includes(match.one);
+  if ("any" in match) return !!match.any?.some((c) => safe.includes(c));
+  if ("all" in match) return !!match.all?.every((c) => safe.includes(c));
   return false;
 }
 
 export function PermissionGate(props: PermissionMatch & { children: ReactNode; fallback?: ReactNode }) {
-  const permissions = useAppSelector((s) => s.auth.permissions);
+  const permissions = useAppSelector((s) => s.auth.permissions) ?? [];
   const ok = hasPermission(permissions, props as PermissionMatch);
   if (!ok) return <>{props.fallback ?? null}</>;
   return <>{props.children}</>;
 }
 
 export function PermissionHide(props: PermissionMatch & { children: ReactNode }) {
-  const permissions = useAppSelector((s) => s.auth.permissions);
+  const permissions = useAppSelector((s) => s.auth.permissions) ?? [];
   const hidden = hasPermission(permissions, props as PermissionMatch);
   if (hidden) return null;
   return <>{props.children}</>;
@@ -44,6 +45,6 @@ export function PermissionHide(props: PermissionMatch & { children: ReactNode })
 
 /** Hook form — use when gating logic, not JSX (e.g. redirecting if not allowed on a page) */
 export function useHasPermission(match: PermissionMatch): boolean {
-  const permissions = useAppSelector((s) => s.auth.permissions);
+  const permissions = useAppSelector((s) => s.auth.permissions) ?? [];
   return hasPermission(permissions, match);
 }
