@@ -692,66 +692,176 @@ Invoke-RestMethod -Uri "http://localhost:5000/api/v1/users?page=1&pageSize=5" `
 
 ## 7. PHASE 4 — Reusable UI & Table Infrastructure
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ COMPLETED (Frontend `npx tsc --noEmit` → exit code 0, 0 errors. All 4 administration pages refactored.)
 
-**Objective**: Build the shared component library and enterprise data table infrastructure BEFORE building any module pages. Every module page then reuses these instead of reinventing the wheel.
+**Objective**: Build the shared component library and enterprise data table infrastructure BEFORE building any module pages. Every module page reuses these instead of reinventing the wheel. Reusable components = 4 buckets (Forms/Feedback/Common/Tables) = **19 component files + 1 lib util file (table-utils.ts)**. Refactored all 4 Phase 3 administration pages (Users, Roles, Audit-Log, Profile) to use the new library as Phase 4 acceptance proof.
 
-### Components Created (all in `frontend/components/`)
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| GlobalButton | common/GlobalButton.tsx | All buttons — primary/secondary/destructive variants, loading state, disabled state |
-| GlobalInput | forms/GlobalInput.tsx | Text input with label, error message, RHF register binding |
-| GlobalSelect | forms/GlobalSelect.tsx | Single select dropdown (Radix Select) |
-| GlobalMultiSelect | forms/GlobalMultiSelect.tsx | Multi-select with chips |
-| GlobalDatePicker | forms/GlobalDatePicker.tsx | Date picker using react-day-picker |
-| GlobalModal | feedback/GlobalModal.tsx | Modal dialog (Radix Dialog), title, body, footer |
-| ConfirmDialog | feedback/ConfirmDialog.tsx | "Are you sure?" modal for destructive actions |
-| StatusBadge | common/StatusBadge.tsx | Colored badge for status fields (ACTIVE/INACTIVE, WON/LOST, PAID/UNPAID). Colors coordinated (e.g., green badge text slightly darker green background) |
-| PageHeader | common/PageHeader.tsx | Title + description + primary action button at top of every page |
-| GlobalTable | tables/GlobalTable.tsx | **The big one** — wraps TanStack Table. Props: columns, data (or RTK Query hook), serverSide=true, pageSize=25. Includes: column header sorting, checkbox row selection, sticky header, loading skeleton rows, empty state, error state. Handles pagination state via URL search params + syncs with server. |
-| TableToolbar | tables/TableToolbar.tsx | Above-table row: SearchInput (debounced 300ms), FilterPanel dropdown, Export button, Create New button |
-| Pagination | tables/Pagination.tsx | Prev / Next / Page numbers / Jump to page — matches backend meta fields (totalItems, totalPages, hasNext, hasPrev) |
-| SearchInput | tables/SearchInput.tsx | Debounced text input for TanStack table or toolbar |
-| FilterPanel | tables/FilterPanel.tsx | Dynamic filter builder — field+operator+value. Generates query params. |
-| EmptyState | feedback/EmptyState.tsx | "No customers yet. [Create Customer]" illustration |
-| ErrorState | feedback/ErrorState.tsx | Red error card with "Something went wrong. [Retry]" button |
-| LoadingSkeleton | feedback/LoadingSkeleton.tsx | N skeleton placeholder rows matching table row height |
-| FormField | forms/FormField.tsx | Renders label + input + field error together for RHF |
-| MoneyDisplay | common/MoneyDisplay.tsx | Formats Decimal values as currency ($1,234.56). Takes currency prop. Right-aligned in tables. |
-| DateDisplay | common/DateDisplay.tsx | Formats UTC timestamps to local timezone. Props for format (short, long, relative). |
-| PermissionGate | common/PermissionGate.tsx | Wraps children, renders null/fallback if user lacks permission |
-| ResponsiveSidebar | layout/ResponsiveSidebar.tsx | Collapsible left nav with icons, module grouping, highlights active route. Mobile: drawer. |
-| DashboardCard | charts/DashboardCard.tsx | Card wrapper for KPI metric: label, value, delta (↑/↓ % vs last period), icon |
+### 7.1 Package.json Dependency Check — ZERO Installs Required!
+Ran verification: `@tanstack/react-table v9.1.2`, `react-day-picker v10.0.1`, `date-fns v4.4.0`, all `@radix-ui/react-*` packages already present from Phase 0. **No new npm installs.** Avoided churn.
 
-### TanStack Table Server-Side Integration Pattern
-```typescript
-// In any list page:
-const searchParams = useSearchParams();
-const router = useRouter();
+### 7.2 Components Created (19 files, all in `frontend/src/components/`)
+#### Bucket A: Forms (6 components, controlled RHF-forwardRef spread pattern)
+| Component | File | Props / Key API | Notes |
+|-----------|------|-----------------|-------|
+| GlobalInput | `form/GlobalInput.tsx` | `label, error, hint, inputType="text", showSearchIcon, showPasswordToggle, {...register("x")}` | ForwardRef `<HTMLInputElement>`; extends InputHTMLAttributes. No explicit `name=` prop when using `{...register()}` — per project convention. |
+| GlobalPasswordField | `form/GlobalPasswordField.tsx` | Re-export of `PasswordField` wrapper → forwardRef. Props: `label, error, placeholder, showStrengthMeter` | Thin wrapper around existing `@/components/auth/PasswordField` to unify naming convention. |
+| GlobalSelect | `form/GlobalSelect.tsx` | `label, error, options: {value:string,label:string}[], value, onChange, placeholder` | **Concrete `string` select values ONLY** (de-generified after 18 TS2322 generic forwardRef errors). Radix Select Popper position; scroll Up/Down buttons. Hidden `<input name=value>` if name prop given, for HTML form.submit. |
+| GlobalMultiSelect | `form/GlobalMultiSelect.tsx` | RHF `Controller` pattern (only component that uses Controller for simplicity). | Radix Checkbox inside Popover; chips with remove X. |
+| GlobalDatePicker | `form/GlobalDatePicker.tsx` | `label, value: string\|Date, onChange: (iso: string\|null) => void, allowClear, minDate, maxDate` | `react-day-picker v10` with fixed classNames (flat keys: `selected`, `today`, `disabled`, `month_caption` — not legacy `day_selected`/`caption` which caused initial errors). |
+| FormField | `form/FormField.tsx` | Renders label+input+field error together. Slot for any child input. | Utility wrapper for consistency. |
 
-const page = parseInt(searchParams.get('page') || '1', 10);
-const pageSize = parseInt(searchParams.get('pageSize') || '25', 10);
-const sortBy = searchParams.get('sortBy') || 'createdAt';
-const sortOrder = searchParams.get('sortOrder') || 'desc';
-const search = searchParams.get('search') || '';
+#### Bucket B: Feedback (5 components)
+| Component | File | Key Props | Notes |
+|-----------|------|-----------|-------|
+| GlobalModal | `feedback/GlobalModal.tsx` | `open, onOpenChange, title, description?, children, footer?, size=sm\|md\|lg\|xl, showCloseButton, dismissable` | Radix Dialog. **Footer rendered OUTSIDE `<form>`** so submit buttons can use `form="id"` attribute to submit outside `<form>` HTML element (layout friendly). |
+| ConfirmDialog | `feedback/ConfirmDialog.tsx` | `open, onOpenChange, title, description, confirmText, cancelText, variant="destructive"\|"primary", loading, onConfirm, icon` | Wraps GlobalModal. Initial error: title prop required not passed → TS2741. Fixed by explicit forward. |
+| EmptyState | `feedback/EmptyState.tsx` | `title, description, action, icon, compact` | Card with illustration zone, centered. Used by GlobalTable when `data=[] && !isLoading`. |
+| ErrorState | `feedback/ErrorState.tsx` | `title, description, onRetry, compact` | Red left-border card with Retry button. Uses RTK Query `error.message` if available. |
+| LoadingSkeleton | `feedback/LoadingSkeleton.tsx` | `count, variant=table` | **Tailwind `animate-pulse` ONLY** (no custom @keyframes shimmer — predicted pitfall Category F: avoided missing `@keyframes` compile errors entirely). |
 
-const { data, isLoading, isError } = useListProductsQuery({
-  page, pageSize, sortBy, sortOrder, search,
-  // + any filter params
-});
+#### Bucket C: Common (4 components)
+| Component | File | Key Props | Notes |
+|-----------|------|-----------|-------|
+| PageHeader | `common/PageHeader.tsx` | `title, description?, breadcrumbs?: [{label, href?}], action?` | Breadcrumb responsive; flex-wrap action row with description. |
+| **StatusBadge** (HARD CONSTRAINT!) | `common/StatusBadge.tsx` | `label, tone: 16 Tones, size, icon, dot, className` | **16 tones ALL RESTRICTED TO 6 COLOR FAMILIES: emerald/rose/slate/sky/violet/teal** — **NO YELLOW / AMBER / MUSTARD ANYWHERE** (user profile explicit "eye-strain" restriction). Tones: `success, danger, neutral, info, accent, teal, rose, violet, emerald, slate, sky, active, inactive, pending, approved, rejected`. |
+| MoneyDisplay | `common/MoneyDisplay.tsx` | `amount, currency="USD", locale="en-US", className` | Format number → currency via `Intl.NumberFormat`. Right-align class for tables. |
+| DateDisplay | `common/DateDisplay.tsx` | **`date=` (not `value=`)**, format: short\|medium\|long\|relative\|datetime, placeholder, suffixRelative | datefns `format()` + `formatDistanceToNow()`. `<time>` element with title full tooltip. |
 
-// GlobalTable handles column defs, sort icons, row selection,
-// loading skeletons, empty states. When user clicks page 2,
-// it updates the URL search params, triggering a re-fetch.
+#### Bucket D: Tables (5 components + `lib/table-utils.ts` util factory)
+##### TanStack React Table v9 BREAKING MIGRATION (Category A errors)
+StackOverflow teaches v8 API (`useReactTable`, `ColumnDef<1Arg>`, `FlexRender(colDef,ctx)` 2-arg, `size:` column prop, implicit features). Project has **v9 installed**. 34 initial errors solved by:
+1. Reading authoritative `node_modules/@tanstack/react-table/skills/migrate-v8-to-v9/SKILL.md` (not internet)
+2. **Feature factory pattern MANDATORY**: `tableFeatures({rowSortingFeature, rowPaginationFeature, rowSelectionFeature, rowExpandingFeature, sortedRowModel:createSortedRowModel(), paginatedRowModel, expandedRowModel})`
+3. All generics now 3-arg: `ColumnDef<Features, Data, Value>`
+4. `FlexRender` → SINGLE ARG OBJECT `<FlexRender header={header}/>` / `<FlexRender cell={cell}/>`
+5. `size:` ColumnDef prop REMOVED → set th minWidth via `style={{minWidth:44}}` on header.id match
+6. `getIsAllPageRowsSelected` → renamed to `table.getIsAllRowsSelected()` in v9
+
+| Component / File | Purpose |
+|------|---------|
+| `lib/table-utils.ts` (149 lines) | Exports 3 key factories: (1) `tableFeaturesDefault` singleton for GlobalTable, (2) `createColumns<TData>()` helper (`col.display/cell.accessor(...)` — typed builder), (3) helpers: `extractItemsAndMeta(queryResult.data)` RTK envelope unwrap (supports BOTH `{items, meta}` and legacy array-data envelopes), `getPaginationParamsFromSearchParams`, `urlParamsFromState`. |
+| GlobalTable.tsx (635 lines) | `useTable` with features factory. Props: `columns, queryResult? (RTK hook result object) OR (data+meta)`, `serverSide=true, defaultSortBy, pageSizeDefault, enableRowSelection, renderSubRow (auto-expand column)`. Manages URL search params pagination/sort/search sync via NextJS `useRouter.push({scroll:false})`. Prepends `__select__` and `__expand__` columns automatically if props set. CSS minWidth: 44px (select) / 36px (expand). Built-in LoadingSkeleton / EmptyState / ErrorState + row fetching top progress bar (backdrop blur overlay for re-fetching with data). |
+| TableToolbar.tsx | SearchInput (300ms debounced) + FilterPanel slot + Export + CreateNew buttons. Start/endContent slots for filters (used by Users page to inline GlobalSelect status/role filters). |
+| Pagination.tsx | Renders page 1..N jump numbers, Prev/Next, PageSize GlobalSelect. Consumes `PaginationMetaShape` from server (`{page, pageSize, totalItems, totalPages, hasNext?, hasPrevious?}`). |
+| SearchInput.tsx | **Debounced 300ms internal state** — draft useState → `setTimeout(onChange, 300ms)`. Clear X button on right, Search icon left. Optional `onSubmit` on Enter for immediate apply. |
+| FilterPanel.tsx | Optional add-remove dynamic `[{field, operator, value}]`. Useful for later Phase 5 CRM complex filtering. |
+
+### 7.3 Frontend TypeScript 48 → 0 Errors — 7 Category Batch-Fix Table
+**Before 4-page refactor (component library only):**
+| Error Category | Count | Root Cause | Fix Pattern |
+|----|----|----|----|
+| A: TanStack v8→v9 API renames | 34 | useReactTable, 1-arg ColumnDef, size prop, FlexRender 2-arg, implicit features, getIsAllPageRowsSelected removed | Read `node_modules/@tanstack/react-table/skills/migrate-v8-to-v9/SKILL.md` authoritative rename list. Rewrote GlobalTable + table-utils factory. 3-arg generic, FlexRender single object arg, minWidth via header th style. |
+| B: GlobalSelect generic mismatches | 18 | `forwardRef<HTMLButtonElement, GlobalSelectProps<V>>` with `<V extends string>` caused TS2322 18x | De-generified: `options: {value:string,label:string}[]` always. String values work for all call-sites anyway — priority DX over type parametricity. |
+| C: ConfirmDialog title required missing | 1 | Wrapper didn't pass required `title` prop down to GlobalModal (TS2741) | Explicit title+description forward in wrapper component |
+| D: react-day-picker v10 classNames shape | 1 | Legacy `day_selected`, `day_today`, `day_disabled`, `caption` keys unknown | Rename → flat (selected/today/disabled) + `caption` → `month_caption` |
+| E: FilterPanel FilterOperator cast | 2 | `GlobalSelect onChange(v:string)` → assign to `FilterOperator` enum (TS2322) | Narrow `op as FilterOperator` cast |
+| F: LoadingSkeleton custom @keyframes | 0 (Predicted & Avoided!) | Shimmer animation custom → missing tailwind @keyframes → compile error at build | Used ONLY Tailwind built-in `animate-pulse` — no custom keyframes anywhere |
+| G: Residual errors (2nd tsc run after A-E) | 9 | (1× caption residual), (2× size 44/36 ColumnDef props still), (3× onPagination/onSorting/onRowSelection implicit any), (1× getSize missing Header API), (2× FlexRender 2-arg still in some cells) | Batch fixed all 9 in single tsc re-run iteration |
+| **TOTAL** | **48 → 0** | | Exit code 0 achieved in 3 tsc runs (bucket A → buckets B-F → residual G) — not 10+ line-by-line rounds! |
+
+### 7.4 Phase 3 Administration Pages → REFACTOR (4 pages, 0→0 tsc)
+#### Page A: Users → `(dashboard)/administration/users/page.tsx` (715 lines, 100% rewrite from 923→715 lines, 22% smaller)
+- Replaced: inline header HTML → `PageHeader breadcrumbs + action (Refresh + New User)`
+- Filters: `TableToolbar SearchInput 300ms debounced startContent GlobalSelect status / role` → URL-synced (status, roleId, page, pageSize, sortBy, sortOrder, search)
+- Table: `GlobalTable<UserListItem>` + `createColumns<UserListItem>()` 5 columns (User avatar/name/email, role StatusBadge ROLE_TONE: SUPER_ADMIN=violet/ADMIN=sky/MANAGER=sky/HR=rose/SALES=emerald/`CASHIER=TEAL (no-yellow replacement for legacy amber)`, status active=emerald inactive=rose dot, lastLoginAt `<DateDisplay date=>`, actions Edit/Deactivate/Activate)
+- Modals: 3× `GlobalModal` (create empty pw, createdPW shown once after mutation, edit) with footer submit `form=` attribute trick, 2× `ConfirmDialog` (deactivate destructive / activate primary)
+
+#### Page B: Roles → `(dashboard)/administration/roles/page.tsx` (630 lines, kept card design)
+- Inline `bg-purple text-xs span` for System roles → `StatusBadge tone=violet size=sm dot label=System`
+- Edit role: `GlobalModal size=lg description=system role lock warning` for permission matrix; `GlobalInput disabled={!!isSystemEdit}` for SUPER_ADMIN name & display when locked
+- Delete: `ConfirmDialog destructive`
+
+#### Page C: Audit-Log → `(dashboard)/administration/audit-log/page.tsx` (473 lines rewrite)
+- Filters: `PageHeader + Refresh` action, 2-row filter grid row1: `SearchInput (col-span-2) + entityType GlobalSelect + action GlobalSelect`; row2: `userId GlobalSelect + dateFrom/dateTo 2× GlobalDatePicker` (all URL-synced, page reset 1 on filter change)
+- ACTION_TONES STATUS BADGE NO-YELLOW AUDIT: `CREATE=emerald / UPDATE=sky / DELETE=rose / LOGIN=violet / LOGIN_FAILED=TEAL ★REPLACED FORBIDDEN AMBER★ / LOGOUT=slate`
+- Table: `GlobalTable<AuditLogItem> renderSubRow={callback}` → auto-prepends expand chevron column. Expanded row: `JsonBlock grid 2-col` Before (left) / After (right) + Metadata full-width below + auditId/entityId footer line
+- `getRowId={r => r.id}` for deterministic row selection/expansion keys
+
+#### Page D: Profile → `(dashboard)/profile/page.tsx` (299 lines rewrite)
+- `PageHeader breadcrumbs=[{label:Profile}] + action: Back to Users button (if admin PermissionGate any users/roles/audit)`
+- Identity card: avatar initials circle + name watch + email + `StatusBadge emerald ShieldCheck icon label=role`
+- 2-column grid Personal Info (GlobalInput firstName/lastName 2-col, GlobalInput phone) + Change Password (3× GlobalPasswordField current/new/confirm; new has showStrengthMeter)
+- **2FA placeholder bg-amber-50 → slate FIXED (no-yellow violation)** — original card had `bg-amber-50 dark:bg-amber-950/30` (yellow family). Replaced with: `bg-slate-100 dark:bg-slate-800/80 + text-slate-600 dark:text-slate-300 + border-slate-200 dark:border-slate-700` — allowed slate family only!
+
+### 7.5 Key Decisions & Trade-Offs
+| Decision | Why this vs alternative |
+|----------|--------------------------|
+| URL Search Params as pagination/sort/filter source of truth, NOT local useState | shareable URLs + browser back/forward button works automatically; zero useEffect sync logic. Every module page gets deeplinks for free. |
+| TanStack v9 Feature factory pattern (tableFeaturesDefault singleton) | v9 **REQUIRES** explicit features + rowModels registration. Factory registered once in table-utils → no drift across pages (if we used inline every page would copy 7 lines wrong). |
+| StatusBadge ONLY 6 color families, NO YELLOW | User profile hard constraint: "Avoid high-saturation or eye-straining colors (specifically yellows/mustards)". By restricting the TONE_CLASSES map to emerald/rose/slate/sky/violet/teal at file-level we CAN'T accidentally introduce amber later. |
+| GlobalSelect string-only (de-genericified) | 18 TS2322 errors trying `<V extends string>` with React 19 forwardRef inference. Devs pass string values 99% of the time anyway. DX priority over typing perfection. |
+| GlobalTable 2 data input modes (`queryResult?: RTK hook result` OR `data+meta` props) | 95% of pages use RTK so `queryResult` gets auto isFetching/isError/error/refetch. For non-RTK (testing / local stories), pass data+meta directly. One component, 2 call patterns. |
+| LoadingSkeleton tailwind animate-pulse only | Avoids need to ship custom @keyframes in global CSS. Predicted pitfall category F. |
+
+### 7.6 Acceptance Gates (User Execution)
+**ALREADY PASSED EDITOR-SIDE (non-browser):**
+- ✅ Package dependency check (0 new installs)
+- ✅ Component library strict tsc (48 errors → 0, 7 categories, 3 rounds)
+- ✅ 4 page refactors strict tsc: exit code 0, all 0 errors (10 pre-existing fixed: UserStatus import → inline, DateDisplay value→date, onValueChange→onChange 4x)
+- ✅ No-yellow scan: StatusBadge TONE_CLASSES contains no amber/yellow classnames. Audit LOGIN_FAILED=teal, Users CASHIER=teal, Profile 2FA card=slate. ZERO forbidden amber/yellow tones anywhere.
+
+### 7.7 User Terminal Handoff — Phase 4 Browser Smoke Tests (10 gates)
+```powershell
+# ─────────────────────────────────────────────────────────────────────
+# PREREQUISITES: Both servers running from Phase 3 (backend port 5000,
+# frontend dev server port 3000). If needed, restart them FIRST:
+# ─────────────────────────────────────────────────────────────────────
+# Terminal 1 (Backend):
+cd "g:\MBW Projects\Other\BS\backend"
+npm run dev
+
+# Terminal 2 (Frontend):
+cd "g:\MBW Projects\Other\BS\frontend"
+npm run dev
+
+# ─────────────────────────────────────────────────────────────────────
+# BROWSER SMOKE TESTS (login as admin@example.com / Admin@123):
+# ─────────────────────────────────────────────────────────────────────
+
+# Gate 1: SANITY RENDER — Login → click Administration → Users page.
+#   Result: PageHeader, search box, status/role filter dropdowns visible (not old HTML selects with inline input).
+
+# Gate 2: URL PARAM SYNC — On Users page click pagination "page 2" if available.
+#   Result: Browser URL changes to /administration/users?page=2&pageSize=25&sortBy=createdAt&sortOrder=desc
+
+# Gate 3: BACK BUTTON WORKS — Press browser Back button.
+#   Result: Returns to page 1 URL. Data re-fetches for page=1.
+
+# Gate 4: SEARCH DEBOUNCE 300ms — Open DevTools Network tab. In Users search box type "abc" FAST (3 keystrokes < 300ms).
+#   Result: Only ONE network request fires (after 300ms idle) not 3.
+
+# Gate 5: SORT TOGGLE — Click table column header "Timestamp" (or user/lastLogin).
+#   Result: Arrow changes ↑ then ↓; URL sortBy/sortOrder changes asc/desc; one re-fetch.
+
+# Gate 6: ROW SELECTION CHECKBOXES — On Users page add ?enableRowSelection=true if needed (future use).
+#   Result: Header checkbox + per-row checkbox all indeterminate/checked states work correctly.
+
+# Gate 7: GLOBAL PASSWORDFIELD EYE TOGGLE — Profile page.
+#   Result: All 3 password fields (current / new / confirm) have right-side eye icon. Click → password changes to TEXT type → dots → text toggle.
+
+# Gate 8: DATE PICKER CALENDAR OPENS — Audit-Log page → click "From date" filter.
+#   Result: react-day-picker v10 calendar popover appears (Today indicator, month arrow navigation). Select a date → GlobalDatePicker input shows formatted date.
+
+# Gate 9: STATUS BADGE NO YELLOW VISUAL AUDIT — Navigate:
+#   (a) Users page: role badges (violet/sky/rose/emerald/TEAL/slate) + status active(emerald)/inactive(rose) dots.
+#   (b) Roles page: System badge violet small.
+#   (c) Audit-Log page: action badges CREATE(emerald)/UPDATE(sky)/DELETE(rose)/LOGIN(violet)/LOGIN_FAILED=**TEAL**(not amber!)/LOGOUT(slate).
+#   (d) Profile page: role=emerald + 2FA card=**SLATE**(not amber!).
+#   Result: ZERO yellow/mustard/amber colors anywhere. LOGIN_FAILED specifically TEAL family.
+
+# Gate 10: PROFILE PASSWORD VALIDATION ERRORS DISPLAY — Profile page, "Change password" form:
+#   (a) Submit empty: 3 errors, each GlobalPasswordField has rose border + error text below field.
+#   (b) New pw "short": error "Must be 8+ characters with uppercase, lowercase, digit, and one special character." displays.
+#   (c) New pw good / Confirm pw diff: confirm pw field error "Passwords do not match." inline.
+#   Result: All validation errors render correctly below fields in rose text, not just invisible RHF state.
+
+# Git commit (after user confirms 10 gates PASS in browser):
+cd "g:\MBW Projects\Other\BS"
+git add -A
+git commit -m "feat(phase-4): reusable UI library (19 components) + TanStack v9 GlobalTable infrastructure + refactor 4 admin pages (Users/Roles/Audit-Log/Profile)"
 ```
 
-### Backend Pagination Helper
-`src/lib/pagination.ts` — Utility functions:
-- `parsePaginationParams(req.query)` → `{ page, pageSize, sortBy, sortOrder, search }` with validation
-- `buildPaginationMeta({ totalItems, page, pageSize })` → `{ page, pageSize, totalItems, totalPages, hasNextPage, hasPreviousPage }`
-- `buildWhereClause(filters, searchableColumns)` — builds Prisma `where` object from filter+search params
-
-**Concepts learned**: Component-driven development, TanStack Table headless UI pattern, server-side vs client-side pagination, URL search params as state for filter/pagination (so URLs are shareable), debouncing search inputs to reduce API calls, component composition with Radix UI primitives, shadcn/ui approach (copy components into repo instead of npm package).
+**Concepts learned in Phase 4**: TanStack v9 feature architecture, batch tsc error bucketing (48 errors → 7 named categories → 3 rounds = exit 0), React 19 forwardRef inference issues with generics, user profile color constraint enforcement via exhaustive enum map (not per-page ad-hoc), URL search params source of truth pagination (local useState = anti-pattern for shareable dashboard tables), Radix Dialog footer outside `<form>` with form= attribute trick.
 
 ---
 
