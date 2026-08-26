@@ -19,6 +19,7 @@ import { permissionsRouter } from "../modules/permissions/routes";
 import { auditLogsRouter } from "../modules/audit-logs/routes";
 import { profileRouter } from "../modules/profile/routes";
 import { crmRouter } from "../modules/crm/routes";
+import { inventoryRouter } from "../modules/inventory/routes";
 
 const apiV1Router = Router();
 
@@ -32,8 +33,8 @@ apiV1Router.use("/audit-logs", auditLogsRouter);
 apiV1Router.use("/profile", profileRouter);
 
 apiV1Router.use("/crm", crmRouter);
+apiV1Router.use("/inventory", inventoryRouter);
 
-// Phase 6+: /products, /warehouses, /stock, ...
 // Phase 7+: /orders, /invoices, /payments
 // Phase 8+: /employees, /attendance, /leaves
 // Phase 9+: /dashboard/*

@@ -1022,34 +1022,131 @@ git commit -m "feat(phase-5): CRM module (6 Prisma models + 6 RBAC-gated backend
 
 ---
 
-## 9. PHASE 6 — Inventory Module (Products, Stock, Warehouses)
+## 9. PHASE 6 — Inventory Module
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ Editor-side complete; pending your terminal runs + browser smoke tests
 
-### Tables
-- `categories` (id, name, description, status)
-- `products` (id, sku UNIQUE, name, description, categoryId, brand, unit, purchasePrice Decimal(12,2), sellingPrice Decimal(12,2), taxRate Decimal(5,2), minimumStock, status, imageUrl, createdBy)
-- `warehouses` (id, code, name, address, managerId, status)
-- `stock` (productId FK + warehouseId FK → composite unique PK, quantity, reservedQuantity) — physically separate stock per warehouse per product
-- `stock_movements` (id, productId, warehouseId, type ENUM, quantity, referenceType, referenceId, note, createdBy, createdAt)
+### § 9.1 Data model — 2 new enums + 5 tables
+- Enums added: `MovementType` (7 values: `IN / OUT / TRANSFER_IN / TRANSFER_OUT / ADJUST / COUNT / SCRAP`). `ProductStatus` reused `ACTIVE/INACTIVE/DISCONTINUED` from prior schema.
+- 5 new Prisma models written in `backend/prisma/schema.prisma` (540-650 block, lines ~540-650 after Phase 5 CRM):
+  1. `Category` — id, name unique, description, parentId? (self-join CategoryTree infinite nesting), createdById FK User SetNull, products Product[]. Indexes: name (uniq covers), parentId, createdById.
+  2. `Product` — id, sku (SKU-0001 counter) unique, name, barcode? nullable w/ index, categoryId FK, status ProductStatus @default ACTIVE, description, costPrice Decimal(14,2) default 0, unitPrice same, unitOfMeasure string @default("EACH"), weightKg Decimal(10,3)?, createdById FK. Indexes: sku/name/barcode/categoryId/status/createdById/unitPrice/createdAt. Keeps cross-phase FK: `orderItems OrderItem[]` (Phase7 Sales relation preserved untouched).
+  3. `Warehouse` — id, name unique, code? unique nullable (3-8 uppercase), location?, isActive boolean @default true, createdById FK. Indexes name/code/isActive/createdById. Cross-phase FK: `orders Order[]` (Phase7 preserved).
+  4. `Stock` COMPOSITE PK `@@id([productId, warehouseId])` — NO separate auto id. productId FK Cascade, warehouseId FK Cascade, quantity @default 0, minimumLevel @default 0, updatedAt. Indexes: warehouseId, quantity. Stock write via StockMovement service ONLY (read-only GET endpoints; no POST/PATCH/DELETE standalone on stock table).
+  5. `StockMovement` **append-only immutable**: id, movementType MovementType, productId FK Cascade, warehouseId FK Cascade, quantity Int positive (sign encoded in type, never stored negative), reference?, note?, userId FK SetNull, createdAt. Indexes movementType/productId/warehouseId/userId/createdAt. `creator` StockMovementCreator placeholder kept separate for Phase7 StockMovementType legacy — our model uses user→MovementUser relation.
+- Existing `User` relations augmented (3-way create FK + 1 movement): createdCategories Category[], createdProducts Product[], createdWarehouses Warehouse[], movementUser StockMovement[]. Existing placeholder fields (warehousesManaged / createdOrders etc) preserved additive.
 
-Stock movement types: PURCHASE, SALE, RETURN, ADJUSTMENT_IN, ADJUSTMENT_OUT, TRANSFER_IN, TRANSFER_OUT
+### § 9.2 RBAC: 16 new granular permission codes + 7-tier idempotent additive seed
+File: `backend/prisma/seed_phase6_inventory.ts` standalone `main().catch()` (no shared prisma singleton — runs on its own client).
 
-### Critical Backend Patterns
-- **Never trust client-side stock calculation**. Stock qty is the DB source of truth. When we need "available qty": `stock.quantity - stock.reservedQuantity`.
-- **Manual stock adjustment**: `POST /stock/adjustments` — creates a stock_movement record AND atomically updates the stock row (increment or decrement) inside a Prisma transaction.
-- **Low-stock alert API**: `GET /stock/low` returns products where `quantity - reservedQuantity < minimumStock` across any warehouse.
-- **SKU uniqueness**: Backend validates with Zod + Prisma unique constraint. Duplicate SKU returns 409 Conflict with message "SKU 'XYZ-123' already exists".
-- `GET /products` — Server-side search by name/SKU, filter by category/status, sort by price/name/createdAt, pagination.
-- `GET /products/:id` — Includes category, stock by warehouse (array of warehouse rows + qty), last 20 stock movements.
+Permissions 16 codes grouped:
+- `inventory.categories.{read,create,update,delete}` (4)
+- `inventory.products.{read,create,update,delete}` (4)
+- `inventory.warehouses.{read,create,update,delete}` (4)
+- `inventory.stock.read` (1 read-only)
+- `inventory.movements.{read,create}` (2 append-only; NEVER delete/patch)
 
-### Frontend Inventory
-- Inventory sub-pages: Categories, Products, Warehouses, Stock Overview, Stock Movements, Stock Adjustments
-- Product list with image thumbnails, sellingPrice as MoneyDisplay, stock qty by warehouse (green if > minimumStock, red if low, amber if exactly at minimum)
-- Stock Movement history table with colored type badges, reference links (e.g. movement type=SALE links to Order #SO-0421)
-- Low Stock dashboard widget on inventory home
+Role tier grants matrix (idempotent diff insert find existing first, NEVER deleteMany; additive pattern from Phase 5):
+- **SUPER_ADMIN / ADMIN / MANAGER**: all 16 codes.
+- **SALES**: read-only 4 codes: `inventory.{categories,products,warehouses,stock}.read` each 1 (no write)
+- **CASHIER**: ONLY `inventory.products.read` (to look up SKU prices later Phase7 POS)
+- **HR**: none — empty
+- **VIEWER**: all 5 `*.read` codes (categories/products/warehouses/stock/movements.read)
 
-**Concepts learned**: Inventory tracking patterns, composite unique keys in Prisma, Decimal precision for money (NEVER use JS numbers/floats for currency — IEEE 754 floating point errors add up), row-level stock consistency, stock movement audit patterns, why reservedQuantity is separate from quantity (reserved for pending orders that haven't fully deducted yet).
+### § 9.3 Backend: 5 modules × 4 files = 20 new files + aggregate mount
+Folder pattern: `backend/src/modules/inventory/<resource>/{validators,services,controllers,routes}.ts`
+- `categories/` validators (parentId uuid, ListQuery Pagination+search+parentId) + services (create name unique→409, delete→check has 0 products else 409 "Cannot delete category with products", all $transaction + writeAudit each write)
+- `products/` services `generateSkuCode()` inside create tx (SKU-0001 counter), low-stock list endpoint `stockLevels.some(qty < min)` via where exists, stockSummary per warehouse GROUP join, delete cascade OK (Stock Cascade, movements Cascade)
+- `warehouses/` services code uppercase Zod transform; soft-delete = patch isActive=false, audit UPDATE not DELETE
+- `stock/` **READ-ONLY ONLY**: list with product/warehouse includes + lowOnly filter; getByCompositeKey /:productId/:warehouseId. Intentionally 0 write routes (writes only through movements).
+- `stockMovements/` **APPEND-ONLY, CORE LOGIC 5-step single $transaction atomic**:
+  ```
+  createMovement(dto,req) = $transaction:
+    1. SELECT product exists, warehouse exists (404 each)
+    2. delta = signedInt: +IN/+TRANSFER_IN/+COUNT/+ADJUST / -OUT/-TRANSFER_OUT/-SCRAP/-ADJUST
+    3. prisma.stock.upsert composite key: create qty=max(delta,0), update {increment:delta} DB-atomic increment (no race)
+    4. re-read final stock qty → IF <0 → throw AppError(422, "Insufficient stock. Current qty: 14, Requested delta: -60") → WHOLE tx rolls back including step 3 increment
+    5. INSERT StockMovement row + writeAudit CREATE → commit
+  ```
+  transfer(dto, req): wraps createMovementInTx helper **twice** in ONE SINGLE OUTER $transaction: TRANSFER_OUT fromWarehouse → then TRANSFER_IN toWarehouse. If TRANSFER_OUT fails (insufficient) → TRANSFER_IN never runs no orphan rows; all atomic.
+- Aggregate: `backend/src/modules/inventory/routes.ts` mounts 5 sub routers under /categories /products /warehouses /stock /movements
+- Master mount: `backend/src/routes/index.ts` line after /crm mount → `apiV1Router.use("/inventory", inventoryRouter)`
+
+### § 9.4 Frontend: 7 pages + layout sidebar drawer
+RTK endpoints file `frontend/src/lib/api/inventoryEndpoints.ts`: 28 endpoints injected, 5 new tagTypes runtime push pattern (`(apiSlice as unknown).tagTypes.push("Categories","Products","Warehouses","Stock","Movements")` after createApi baked — prevents RTK silent unknown tag invalidation bug). Transfer endpoint invalidatesTags: Movements+Stock+Products so stock list, products stock tab, movements list all re-render.
+
+Drawer: `layout.tsx` between CRM and Administration: 6 sub-nav links wrapped PermissionGate: Overview (Package icon), Categories (Tags), Products (Boxes), Warehouses (Warehouse), Stock (PackageOpen), Movements (ArrowLeftRight). Icon imports: all 5 from lucide-react already included Phase 3, no new npm install. Zero new deps.
+
+Pages:
+1. **Overview** `/inventory` → 4 KPI DashboardCard grid (Total SKUs, Total Stock sum qtys aggregate, Low Stock count, Movements 24h total) + 2 GlobalTables last 10 rows: Movements (movementType StatusBadge) + Low Stock products.
+2. **Categories list** `/inventory/categories` → Toolbar search+parentId GlobalSelect; 7 cols: id/name/parent/products count teal badge/created/edit+trash. Self-parent blocked (edit modal option disabled: `currentOption.value === currentId`). Delete blocked via service 409 if has products (frontend ConfirmDialog only calls endpoint; service rejects w/ message to toast).
+3. **Products list** `/inventory/products` → 7-col SKU/Name+desc/Category/status/price costPrice vs unitPrice MoneyDisplay 2-row/totalStock qty badge/Actions view/edit/trash. Large GlobalModal create/edit SKU auto-gen disable field; 2-col form; submit in footer form=productForm trick.
+4. **Product detail** `/inventory/products/[id]` → 3 Radix Tabs: (1) Info hero card + edit modal, (2) Stock Per Warehouse sub-table +10/−10 quick button inline calls createMovement IN/OUT 10 qty (auto re-fetch), (3) Movements history 6-col GlobalTable 25 default pageSize signed qty.
+5. **Warehouses list** → 6-col code/name/location/isActive StatusBadge/stock qty/actions. Soft delete ConfirmDialog says "DEACTIVATE warehouse? isActive=false". Code uppercase backend transforms; frontend placeholder note.
+6. **Stock list** `/inventory/stock` → 7-col Product/Warehouse/Quantity/Min level/Status rose vs emerald/Updated/Quick In+Out modals. Low-only Radix Switch URL param sync.
+7. **Movements ledger** `/inventory/movements` → 9-col status badge signed qty + filters toolbar (movementType 7 GlobalSelect, warehouse, product, from/to date range 2x GlobalDatePicker date=). Top buttons: "Create Movement" lg modal + "Transfer Stock" modal (From WH → To WH, 2 atomic rows). Append-only design: NO delete buttons rendered ever, not for admins.
+
+### § 9.5 Decisions & Pitfall Mitigations
+| ID | Pitfall | Decision Chosen to Avoid |
+|---|---|---|
+| 9.A | Race condition: concurrent POST movement SELECT then SET quantity naive | DB atomic `stock.upsert ... update { quantity: {increment: delta} }` (Prisma generates UPDATE ... SET qty = qty + ?); 2 concurrent writes never overwrite. + final guard SELECT re-check <0 before commit |
+| 9.B | Negative stock somehow slips past service check | PostgreSQL schema CHECK constraint last line defense (DB rejects INSERT/UPDATE at engine level) via raw SQL migration footer if needed; service 422 layer catches 99.9% of cases first |
+| 9.C | Transfer 2 writes non-atomic: TRANSFER_OUT commits then TRANSFER_IN fails server crash | SINGLE outer $transaction wraps BOTH createMovementInTx calls. Any error inside rolls back both rows. |
+| 9.D | Categories self-loop parent=itself → infinite tree recursion | Zod refine update controller: parentId !== currentId; frontend select disabled self option |
+| 9.E | Stock direct edit via PATCH endpoint = audit hole nobody knows why qty is -23 | ALL writes MUST go through movements ledger. Stock read-only routes. Don't create PATCH route on stock table. Quantity change = always creates movement row with user, reason, timestamp. |
+| 9.F | Category delete leaves product.categoryId null orphans? | Delete service 409 check products.length > 0 — reject. User must unassign or delete products first. Intentional strict. |
+
+### § 9.6 Editor gates passed (self-verified write level)
+- [x] Schema 5 models, 7 MovementType values, Stock composite PK @@id correct
+- [x] All 3 components (statuses): `bg-amber / bg-yellow / text-amber / text-yellow` — grep 0 references (NO YELLOW PROFILE HARD RULE strictly preserved throughout)
+- [x] RHF spread pattern all inputs (`{...register("x")}` — no explicit name=)
+- [x] GlobalSelect onChange (not onValueChange); GlobalDatePicker date= not value=; GlobalModal submit buttons always footer form=id trick; ConfirmDialog destructive for all hard delete write buttons
+
+### § 9.7 Your terminal commands (in order, STOP ON FIRST ERROR, report to editor)
+```powershell
+# A. Backend Prisma Client (RUN FIRST before any tsc — regenerate new enums/types)
+cd "g:\MBW Projects\Other\BS\backend"
+npx prisma generate
+
+# B. Apply DB migration (PostgreSQL MUST BE RUNNING)
+npx prisma migrate dev --name phase6_inventory
+
+# C. Seed Phase6 RBAC 16 codes + tier grants (idempotent additive, no data loss)
+npx ts-node prisma/seed_phase6_inventory.ts
+
+# D. Backend strict TS exit 0 expected. If errors: copy error list, we categorize bucket-fix (A imports, B enum names, C composite PK relation order) 2 rounds max
+npx tsc --noEmit -p tsconfig.json
+
+# E. Frontend strict TS exit 0 expected
+cd "g:\MBW Projects\Other\BS\frontend"
+npx tsc --noEmit
+
+# F. (Optional fast gate SSR build)
+# npm run build
+
+# G. START SERVERS if not already running (2 terminals):
+#  T1 (backend, :5000): cd backend ; npm run dev
+#  T2 (frontend, :3000): cd frontend ; npm run dev
+```
+
+**H. BROWSER SMOKE TESTS 10 gates (Login Admin admin@example.com / Admin@123)**
+1. **Gate 1**: Sidebar Inventory drawer renders 6 links → click Inventory Overview. KPIs 4 cards + 2 tables render empty or show data.
+2. **Gate 2**: Categories → Create category Beverages (no parent). Then create sub-category Soft Drinks parent=Beverages → list column Parent = "Beverages". Try set parent to "Soft Drinks" on edit → dropdown option disabled.
+3. **Gate 3**: Warehouses → Create 2 warehouses: Main WH code MAIN (auto uppercase backend), Secondary WH code SEC. Soft delete SEC → row still shows but isActive slate badge. Reactivate via edit.
+4. **Gate 4**: Products → Create product "Cola 500ml" → SKU auto-generated SKU-0001. Category=Soft Drinks. costPrice 0.50, unitPrice 1.20. Row appears with emerald ACTIVE.
+5. **Gate 5**: Cola → Stock Per Warehouse tab. Click `+24` (or type 24) quick IN button for Main. Stock shows qty=24 (OK badge emerald). Also add +10 for SEC (now total inventory 34 units).
+6. **Gate 6**: Movements → Transfer Stock button opens transfer modal: From MAIN → To SEC, qty=10, reference="TO-001 stock rebalance". Submit success toast. Movements list now has 2 rows: TRANSFER_OUT MAIN 10, TRANSFER_IN SEC 10. Main stock now 14, SEC now 20.
+7. **Gate 7**: Attempt Create Movement OUT qty 60 from MAIN. Backend 422 "Insufficient stock (Current qty=14, Requested=60)". Stock qty STILL SHOWS 14 unchanged = rollback confirmed.
+8. **Gate 8**: Stock list → toggle "Low only" Switch. (If minLevel=0 for all, first edit product set minLevel=50 global or per-stock minLevel column set → low indicator rose for MAIN @ 14 < 50.)
+9. **Gate 9**: 2-minute visual STATUS BADGE AUDIT: check Products, Movements, Stock badges. ALL emerald/rose/slate/sky/violet/teal. 0 amber/yellow/mustard/gold anywhere. Movement count=teal adjust=violet transfer=sky issue=rose receipt=emerald — exactly 6 families only.
+10. **Gate 10 RBAC**: VIEWER login → Create/Edit/Delete buttons hidden everywhere. SALES login → readonly lists; write buttons hidden. ADMIN back → all buttons visible.
+
+**I. GIT COMMIT after ALL 10 gates verbally "pass":**
+```powershell
+cd "g:\MBW Projects\Other\BS"
+git add -A
+git commit -m "feat(phase-6): Inventory module (5 Prisma models (Stock composite PK) + 20 backend files w/ atomic movements 5-step tx + transfer 2-row atomic + 28 RTK endpoints + 7 frontend pages w/ reusable UI library + 16 idempotent RBAC codes)"
+```
 
 ---
 

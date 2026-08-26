@@ -6,6 +6,7 @@ import { ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Activity,
+  ArrowLeftRight,
   Boxes,
   Building2,
   ChevronDown,
@@ -16,14 +17,18 @@ import {
   LayoutDashboard,
   Lock,
   LogOut,
+  Package,
+  PackageOpen,
   Settings,
   Shield,
   ShoppingCart,
+  Tags,
   Target,
   UserCircle,
   UserRoundPlus,
   Users,
   UserCog,
+  Warehouse,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -65,6 +70,15 @@ const CRM_SUBNAV: SubNavItem[] = [
   { href: "/crm/contracts", label: "Contracts", icon: FileText, requires: { any: ["crm.contracts.read"] } },
 ];
 
+const INVENTORY_SUBNAV: SubNavItem[] = [
+  { href: "/inventory", label: "Overview", icon: Package, requires: { any: ["inventory.categories.read", "inventory.products.read", "inventory.warehouses.read", "inventory.stock.read", "inventory.movements.read"] } },
+  { href: "/inventory/categories", label: "Categories", icon: Tags, requires: { any: ["inventory.categories.read"] } },
+  { href: "/inventory/products", label: "Products", icon: Boxes, requires: { any: ["inventory.products.read"] } },
+  { href: "/inventory/warehouses", label: "Warehouses", icon: Warehouse, requires: { any: ["inventory.warehouses.read"] } },
+  { href: "/inventory/stock", label: "Stock", icon: PackageOpen, requires: { any: ["inventory.stock.read"] } },
+  { href: "/inventory/movements", label: "Movements", icon: ArrowLeftRight, requires: { any: ["inventory.movements.read"] } },
+];
+
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Business Suite";
 
 export default function DashboardLayout({
@@ -82,6 +96,8 @@ export default function DashboardLayout({
   const hasAnyAdmin = useHasPermission({ any: ["users.read", "roles.read", "audit.read"] });
   const hasAnyCRM = useHasPermission({ any: ["customers.read", "crm.customers.read", "leads.read", "crm.leads.read"] });
   const [crmOpen, setCrmOpen] = useState(true);
+  const hasAnyInventory = useHasPermission({ any: ["inventory.categories.read", "inventory.products.read", "inventory.warehouses.read", "inventory.stock.read", "inventory.movements.read"] });
+  const [invOpen, setInvOpen] = useState(true);
 
   const handleLogout = async () => {
     try {
@@ -180,6 +196,61 @@ export default function DashboardLayout({
               )}
               {crmOpen &&
                 CRM_SUBNAV.map((sub) => {
+                  let permProps:
+                    | { one: string }
+                    | { any: string[] }
+                    | { all: string[] };
+                  if (typeof sub.requires === "string") {
+                    permProps = { one: sub.requires };
+                  } else if (sub.requires) {
+                    permProps = sub.requires as { any: string[] } | { all: string[] };
+                  } else {
+                    permProps = { one: "*" };
+                  }
+                  return (
+                    <PermissionGate key={sub.href} {...permProps}>
+                      <Link
+                        href={sub.href}
+                        className={cn(
+                          "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                          collapsed ? "justify-center" : "pl-9",
+                          pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                        )}
+                      >
+                        <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
+                        {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
+                      </Link>
+                    </PermissionGate>
+                  );
+                })}
+            </>
+          )}
+
+          {/* Inventory drawer — shown only if user has any Inventory sub-permission */}
+          {hasAnyInventory && (
+            <>
+              {!collapsed ? (
+                <button
+                  type="button"
+                  className="mt-2 w-full group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  onClick={() => setInvOpen((v) => !v)}
+                >
+                  <Package className="w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary" />
+                  <span className="flex-1 truncate text-left">Inventory</span>
+                  <ChevronDown
+                    className={cn(
+                      "w-4 h-4 text-slate-400 transition-transform",
+                      invOpen && "rotate-180"
+                    )}
+                  />
+                </button>
+              ) : (
+                <div className="mt-2 h-6 flex items-center justify-center text-[10px] text-slate-400">
+                  Inv
+                </div>
+              )}
+              {invOpen &&
+                INVENTORY_SUBNAV.map((sub) => {
                   let permProps:
                     | { one: string }
                     | { any: string[] }

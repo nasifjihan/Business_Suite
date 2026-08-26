@@ -97,6 +97,16 @@ enum StockMovementType {
   TRANSFER_OUT
 }
 
+enum MovementType {
+  IN
+  OUT
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUST
+  COUNT
+  SCRAP
+}
+
 enum OrderStatus {
   PENDING
   CONFIRMED
@@ -242,9 +252,12 @@ model User {
   signedContracts   Contract[]      @relation("ContractSignedBy")
   createdContracts  Contract[]      @relation("ContractCreatedBy")
   activities        Activity[]
-  createdProducts   Product[]
+  createdCategories Category[]      @relation("CategoryCreatedBy")
+  createdProducts   Product[]       @relation("ProductCreatedBy")
+  createdWarehouses Warehouse[]     @relation("WarehouseCreatedBy")
   warehousesManaged Warehouse[]
   stockMovements    StockMovement[] @relation("StockMovementCreator")
+  movementUser      StockMovement[] @relation("MovementUser")
   createdOrders     Order[]
   paymentsReceived  Payment[]
   departments       Department[]
@@ -524,123 +537,115 @@ model Contract {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// INVENTORY (5 tables)
+// INVENTORY — Phase 6 spec (5 tables: Category, Product, Warehouse, Stock, StockMovement)
 // ═══════════════════════════════════════════════════════════════════════
 
 model Category {
-  id          String        @id @default(uuid())
-  name        String        @unique
-  code        String?       @unique
+  id          String   @id @default(uuid())
+  name        String   @unique
   description String?
-  imageUrl    String?
-  status      ProductStatus @default(ACTIVE)
-  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+  parentId    String?
+  createdById String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
-  products Product[]
+  parent     Category? @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children   Category[] @relation("CategoryTree")
+  products   Product[]
+  createdBy  User?     @relation("CategoryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([name])
-  @@index([status])
+  @@index([parentId])
+  @@index([createdById])
 }
 
 model Product {
   id            String        @id @default(uuid())
   sku           String        @unique
   name          String
-  description   String?
+  barcode       String?
   categoryId    String?
-  brand         String?
-  unit          String        @default("pcs") // pcs, kg, box, etc.
-  purchasePrice Decimal       @default(0) @db.Decimal(14, 2)
-  sellingPrice  Decimal       @default(0) @db.Decimal(14, 2)
-  taxRate       Decimal       @default(0) @db.Decimal(5, 2) // percentage
-  minimumStock  Int           @default(0)
-  imageUrl      String?
-  barcode       String?       @unique
   status        ProductStatus @default(ACTIVE)
-  createdBy     String?
+  description   String?
+  costPrice     Decimal       @default(0) @db.Decimal(14, 2)
+  unitPrice     Decimal       @default(0) @db.Decimal(14, 2)
+  unitOfMeasure String        @default("EACH")
+  weightKg      Decimal?      @db.Decimal(10, 3)
+  createdById   String?
   createdAt     DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
 
-  category       Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  creator        User?           @relation(fields: [createdBy], references: [id], onDelete: SetNull)
-  stockRows      Stock[]
-  stockMovements StockMovement[]
-  orderItems     OrderItem[]
+  category      Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  stockLevels   Stock[]
+  movements     StockMovement[]
+  createdBy     User?           @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  orderItems    OrderItem[]
 
   @@index([sku])
   @@index([name])
+  @@index([barcode])
   @@index([categoryId])
   @@index([status])
-  @@index([createdBy])
-  @@index([sellingPrice])
+  @@index([createdById])
+  @@index([unitPrice])
   @@index([createdAt])
 }
 
 model Warehouse {
-  id        String        @id @default(uuid())
-  code      String        @unique
-  name      String        @unique
-  address   String?
-  city      String?
-  country   String?
-  managerId String?
-  status    ProductStatus @default(ACTIVE)
-  createdAt DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt DateTime      @updatedAt @db.Timestamptz(6)
+  id         String   @id @default(uuid())
+  name       String   @unique
+  code       String?  @unique
+  location   String?
+  isActive   Boolean  @default(true)
+  createdById String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
-  manager        User?           @relation(fields: [managerId], references: [id], onDelete: SetNull)
-  stockRows      Stock[]
-  stockMovements StockMovement[]
-  orders         Order[]
+  stockLevels   Stock[]
+  movements     StockMovement[]
+  createdBy     User?   @relation("WarehouseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  orders        Order[]
 
-  @@index([code])
   @@index([name])
-  @@index([managerId])
-  @@index([status])
+  @@index([code])
+  @@index([isActive])
+  @@index([createdById])
 }
 
 model Stock {
-  productId        String
-  warehouseId      String
-  quantity         Int       @default(0)
-  reservedQuantity Int       @default(0)
-  avgCostPrice     Decimal   @default(0) @db.Decimal(14, 2)
-  lastMovementAt   DateTime? @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+  productId    String
+  warehouseId  String
+  quantity     Int      @default(0)
+  minimumLevel Int      @default(0)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
-  // NOTE: Database-level CHECK constraints are added via raw SQL in the migration file
-  // (migration.sql footer: stock_quantity_nonnegative, stock_reserved_nonnegative)
-  // Prisma 7.x schema syntax for CHECK changed; raw SQL is the portable, supported path.
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
 
   @@id([productId, warehouseId])
   @@index([warehouseId])
+  @@index([quantity])
 }
 
 model StockMovement {
-  id            String            @id @default(uuid())
-  productId     String
-  warehouseId   String
-  type          StockMovementType
-  quantity      Int
-  unitCost      Decimal           @default(0) @db.Decimal(14, 2)
-  referenceType String? // ORDER, INVOICE, PURCHASE, ADJUSTMENT, TRANSFER
-  referenceId   String?
-  note          String?
-  createdBy     String?
-  createdAt     DateTime          @default(now()) @db.Timestamptz(6)
+  id           String       @id @default(uuid())
+  movementType MovementType
+  productId    String
+  warehouseId  String
+  quantity     Int
+  reference    String?
+  note         String?
+  userId       String?
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
 
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
-  creator   User?     @relation("StockMovementCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  user      User?    @relation("MovementUser", fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([movementType])
   @@index([productId])
   @@index([warehouseId])
-  @@index([type])
-  @@index([referenceType, referenceId])
-  @@index([createdBy])
+  @@index([userId])
   @@index([createdAt])
 }
 

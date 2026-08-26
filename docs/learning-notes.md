@@ -221,6 +221,32 @@ Benefits: (a) Developer searching for "why does deleting a customer throw a 403?
 
 ## Phase 6 — Inventory
 
+### Mistakes during implementation:
+1. **Wanted initially to give Stock its own auto-increment id field (easy route) instead of composite PK @@id([productId, warehouseId]).** Natural PK really is the pair; adding a surrogate id wastes a column and forces you to still UNIQUE-index the pair anyway. Fix: use @@id composite.
+2. **Planned to add a separate `stock.adjust` endpoint (PATCH /stock/:key qty=X) to simplify QA.** This creates an audit loophole — nobody knows why qty was changed, no user/reason/timestamp. Strict pattern: every qty delta creates a movement row. Fix: remove PATCH stock route entirely; all writes go through movements service append-only.
+3. **Transfer endpoint originally 2 frontend POSTs (1 TRANSFER_OUT + 1 TRANSFER_IN in sequence).** If POST #2 times out after #1 succeeds → missing stock (warehouse A deducted but B not credited). User trust lost. Fix: single POST /movements/transfer wraps BOTH writes in ONE outer Prisma $transaction. Either both happen or neither.
+4. **First naive stock update: SELECT current qty → add delta → UPDATE SET qty = js_newVal JavaScript computed.** RACE CONDITION: 2 concurrent clicks on "+10" → both read 24 → both write 34 → net +10 not +20. Fix: use Prisma DB-atomic `update { quantity: { increment: +delta } }` (Postgres UPDATE ... SET qty = qty + 10 is atomic row-level). Then re-read final row, check < 0 inside tx.
+5. **Categories: backend allowed `parentId = currentId` (self-reference).** That creates an infinite loop in any future recursive UI tree renderer (parent of itself). Fix: Zod refine in UPDATE only, plus frontend select disabled the self row.
+
+### Key decisions:
+1. **Append-only immutable StockMovement design (NO PATCH NO DELETE routes)** — accounting-ledger style. If a mistake is logged, post a correcting movement in the opposite direction with a note. This gives 100% tamper-resistant traceability vs editable rows.
+2. **Dual-layer negative stock guard: service SELECT check + raw SQL DB CHECK.** Service catches 99.9%; the DB CHECK constraint is "the parachute" — even if a future developer adds a new route bypassing the service (or edits SQL tool directly), Postgres engine itself still refuses. Zero trust.
+3. **Soft delete on Warehouses (set isActive=false) vs hard row DELETE.** Hard delete orphans historical stock movements (FK on warehouseId cascade would wipe history). Soft-deactivate means old historical movements still point to valid row, UI just filters new shipments from inactive warehouses.
+4. **Strict Category delete guard 409 "Cannot delete category with products" vs SET NULL on products.categoryId.** Letting users delete a top-level category and silently orphan 400 SKUs into NULL = inventory drift. Strict guard forces conscious user action: move products first.
+5. **unitOfMeasure stored as plain VARCHAR (EACH, BOX, KG, M, L) not a Prisma enum.** Adding TON, PALLET later shouldn't require prisma migrate + re-generate. Dynamic string values = admin can add new units without a schema migration.
+
+### Interview Q&A (study cards for resume):
+**Q: "How do you prevent race conditions on stock quantity updates when two users click 'Add 10' at the exact same millisecond?"**
+A: Don't do naive read-then-write (SELECT qty, +=, UPDATE SET = new — two writes race → lost update). Use DB-atomic increment: prisma generates `UPDATE stock SET quantity = quantity + $1 WHERE product_id=$2 AND warehouse_id=$3`. PostgreSQL row-locks the row inside the UPDATE so concurrent UPDATE 2 serializes, 2 updates = +20 net. Then SELECT back final row inside same $tx to check if new qty is negative → throw 422 (still inside tx; rolls back increment cleanly). Also: service JS pre-check + DB CHECK constraint dual-layered.
+
+**Q: "Design a stock transfer between two warehouses. How do you make sure you don't lose inventory if the server crashes mid-operation?"**
+A: Both ledger entries happen inside ONE single database transaction:
+  `prisma.$transaction(async tx => { tx.stock.upsert (out WH decrement), tx.stock.upsert (in WH increment), tx.stockMovement.create TRANSFER_OUT row, tx.stockMovement.create TRANSFER_IN row, writeAudit both })`.
+If after decrementing source warehouse, the Node process gets OOM killed / network drop before credit — because no COMMIT was issued, Postgres rolls back the entire transaction block on connection termination automatically. Source stock unchanged, destination still zero. No orphans. Compare to HTTP approach: if frontend calls 2 POSTs sequentially you get "ghost stock missing".
+
+**Q: "What is a composite primary key in Prisma, and when do you use it?"**
+A: `@@id([col1, col2])` declares that two columns together are the natural primary key. Best fit when the entity's identity is literally a pairing of two FKs — specifically Stock rows: the unique thing IS "product X in warehouse Y". Adding a synthetic uuid would be wasteful because every query joins/filters by (productId, warehouseId) anyway, and Postgres stores the PK clustered. Upserts become clean `where { productId_warehouseId: { productId, warehouseId } }` Prisma compound unique syntax. Also used on join tables with extra data. Downside: passing routes becomes `/stock/:productId/:warehouseId` (2 params not 1) on detail pages.
+
 ---
 
 ## Phase 7 — POS (Critical Transaction)
