@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import LoginForm from "@/components/auth/LoginForm";
+import { Suspense } from "react";
 
 export default function LoginPage() {
   const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Business Suite";
@@ -19,7 +20,9 @@ export default function LoginPage() {
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
-        <LoginForm />
+        <Suspense fallback={<div>Loading...</div>}>
+          <LoginForm />
+        </Suspense>
       </div>
 
       <p className="text-center text-xs text-muted-foreground/80">

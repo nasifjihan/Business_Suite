@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 import {
   Shield,
@@ -30,7 +29,10 @@ import {
   useUpdateRoleMutation,
   useGetRoleQuery,
 } from "@/lib/api/adminEndpoints";
-import type { PermissionsGroupedResponse, RoleItem } from "@/lib/api/adminEndpoints";
+import type {
+  PermissionsGroupedResponse,
+  RoleItem,
+} from "@/lib/api/adminEndpoints";
 import { cn } from "@/lib/utils";
 import {
   PermissionGate,
@@ -56,11 +58,6 @@ type Permission =
   PermissionsGroupedResponse["grouped"][number]["items"][number];
 
 export default function RolesPage() {
-  const router = useRouter();
-  void router;
-  const searchParams = useSearchParams();
-  void searchParams;
-
   const canCreate = useHasPermission({ one: "roles.create" });
   const canUpdate = useHasPermission({ one: "roles.update" });
   const canDelete = useHasPermission({ one: "roles.delete" });
@@ -84,13 +81,13 @@ export default function RolesPage() {
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
   const [expandedModules, setExpandedModules] = useState<Set<string>>(
-    () => new Set(groupedPerms.map((g) => g.module))
+    () => new Set(groupedPerms.map((g) => g.module)),
   );
 
   // Prefetch detail when entering edit modal
   const { data: roleDetailRes } = useGetRoleQuery(
     modal.kind === "edit" ? modal.roleId : "",
-    { skip: modal.kind !== "edit" }
+    { skip: modal.kind !== "edit" },
   );
 
   const [createTrigger, createState] = useCreateRoleMutation();
@@ -117,13 +114,14 @@ export default function RolesPage() {
         displayName: rd.displayName,
         description: rd.description ?? "",
       });
-      setSelectedCodes(new Set((rd.permissions as any[]).map((p) => p.code) ?? []));
+      setSelectedCodes(
+        new Set((rd.permissions as any[]).map((p) => p.code) ?? []),
+      );
       setExpandedModules(new Set(groupedPerms.map((g) => g.module)));
     }
   }, [modal, roleDetailRes, form, groupedPerms]);
 
-  const isSystemEdit =
-    modal.kind === "edit" && !!roleDetailRes?.data?.isSystem;
+  const isSystemEdit = modal.kind === "edit" && !!roleDetailRes?.data?.isSystem;
 
   // ── Submit handlers ────────────────────────────────────────────────────────
   const onSubmitCreate = async (v: RoleFormValues) => {
@@ -143,9 +141,7 @@ export default function RolesPage() {
     const out = await updateTrigger({
       id: modal.roleId,
       body: {
-        ...(isSystemEdit
-          ? {}
-          : { name: v.name, displayName: v.displayName }),
+        ...(isSystemEdit ? {} : { name: v.name, displayName: v.displayName }),
         description: v.description || undefined,
         permissionCodes: Array.from(selectedCodes),
       },
@@ -211,10 +207,7 @@ export default function RolesPage() {
     return m;
   }, [groupedPerms, selectedCodes]);
 
-  const totalPerms = groupedPerms.reduce(
-    (acc, g) => acc + g.items.length,
-    0
-  );
+  const totalPerms = groupedPerms.reduce((acc, g) => acc + g.items.length, 0);
   const selectedTotal = selectedCodes.size;
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -236,10 +229,7 @@ export default function RolesPage() {
               disabled={rolesLoading}
             >
               <RefreshCw
-                className={cn(
-                  "w-4 h-4",
-                  rolesLoading && "animate-spin"
-                )}
+                className={cn("w-4 h-4", rolesLoading && "animate-spin")}
               />
               Refresh
             </Button>
@@ -265,7 +255,7 @@ export default function RolesPage() {
                   "rounded-xl p-2.5 border",
                   r.isSystem
                     ? "bg-purple-50 dark:bg-purple-950/30 text-purple-600 dark:text-purple-300 border-purple-200/60 dark:border-purple-900/60"
-                    : "bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-300 border-sky-200/60 dark:border-sky-900/60"
+                    : "bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-300 border-sky-200/60 dark:border-sky-900/60",
                 )}
               >
                 <Shield className="w-5 h-5" />
@@ -274,12 +264,7 @@ export default function RolesPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-semibold truncate">{r.displayName}</h3>
                   {r.isSystem && (
-                    <StatusBadge
-                      tone="violet"
-                      size="sm"
-                      dot
-                      label="System"
-                    />
+                    <StatusBadge tone="violet" size="sm" dot label="System" />
                   )}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5 font-mono">
@@ -300,9 +285,7 @@ export default function RolesPage() {
                   <p className="text-[10px] uppercase tracking-wider text-slate-500">
                     Users
                   </p>
-                  <p className="font-semibold leading-tight">
-                    {r.userCount}
-                  </p>
+                  <p className="font-semibold leading-tight">{r.userCount}</p>
                 </div>
               </div>
               <div className="rounded-lg border border-border bg-slate-50 dark:bg-slate-900/50 p-2.5 flex items-center gap-2">
@@ -338,7 +321,7 @@ export default function RolesPage() {
                   title={r.isSystem ? "Cannot delete a system role" : ""}
                   className={cn(
                     !r.isSystem &&
-                      "text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-900"
+                      "text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-900",
                   )}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -393,7 +376,7 @@ export default function RolesPage() {
         <form
           id="role-edit-form"
           onSubmit={form.handleSubmit(
-            modal.kind === "create" ? onSubmitCreate : onSubmitEdit
+            modal.kind === "create" ? onSubmitCreate : onSubmitEdit,
           )}
           className="space-y-5"
           noValidate
@@ -419,7 +402,9 @@ export default function RolesPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Description (optional)</label>
+            <label className="text-sm font-medium">
+              Description (optional)
+            </label>
             <textarea
               {...form.register("description")}
               rows={2}
@@ -483,8 +468,7 @@ export default function RolesPage() {
               {groupedPerms.map((grp) => {
                 const counts = moduleCounts[grp.module];
                 const allChecked =
-                  counts?.total &&
-                  counts.checked === counts.total;
+                  counts?.total && counts.checked === counts.total;
                 const isOpen = expandedModules.has(grp.module);
                 return (
                   <div
@@ -496,8 +480,7 @@ export default function RolesPage() {
                       onClick={() =>
                         setExpandedModules((prev) => {
                           const n = new Set(prev);
-                          if (n.has(grp.module))
-                            n.delete(grp.module);
+                          if (n.has(grp.module)) n.delete(grp.module);
                           else n.add(grp.module);
                           return n;
                         })
@@ -545,8 +528,7 @@ export default function RolesPage() {
                                 "flex items-start gap-2.5 p-2 rounded-lg border border-transparent cursor-pointer transition-colors",
                                 !isSystemEdit &&
                                   "hover:bg-slate-50 dark:hover:bg-slate-800/60",
-                                isSystemEdit &&
-                                  "cursor-not-allowed opacity-90"
+                                isSystemEdit && "cursor-not-allowed opacity-90",
                               )}
                             >
                               <button
@@ -555,9 +537,7 @@ export default function RolesPage() {
                                 disabled={!!isSystemEdit}
                                 className={cn(
                                   "mt-0.5",
-                                  checked
-                                    ? "text-primary"
-                                    : "text-slate-400"
+                                  checked ? "text-primary" : "text-slate-400",
                                 )}
                               >
                                 {checked ? (
@@ -590,14 +570,12 @@ export default function RolesPage() {
           {(createState.isError || updateState.isError) && (
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
               {(
-                (
-                  (createState.isError
-                    ? createState.error
-                    : updateState.error) as {
-                    data?: { error?: { message?: string } };
-                  }
-                )?.data?.error?.message ?? "Failed to save role."
-              )}
+                (createState.isError
+                  ? createState.error
+                  : updateState.error) as {
+                  data?: { error?: { message?: string } };
+                }
+              )?.data?.error?.message ?? "Failed to save role."}
             </div>
           )}
         </form>
@@ -615,9 +593,7 @@ export default function RolesPage() {
             : ""
         }
         confirmText={
-          deleteState.isLoading
-            ? "Deleting…"
-            : "Delete role permanently"
+          deleteState.isLoading ? "Deleting…" : "Delete role permanently"
         }
         loading={deleteState.isLoading}
         icon={<AlertTriangle className="w-5 h-5" />}

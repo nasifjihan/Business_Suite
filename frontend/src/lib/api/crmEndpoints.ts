@@ -12,8 +12,20 @@ type PaginationMeta = {
 type Envelope<T> = { success: true; data: T; message?: string };
 
 export type CustomerStatus = "ACTIVE" | "INACTIVE" | "CHURNED";
-export type LeadSource = "WEBSITE" | "REFERRAL" | "SOCIAL" | "PHONE" | "EMAIL" | "OTHER";
-export type LeadStatus = "NEW" | "CONTACTED" | "QUALIFIED" | "PROPOSAL" | "WON" | "LOST";
+export type LeadSource =
+  | "WEBSITE"
+  | "REFERRAL"
+  | "SOCIAL"
+  | "PHONE"
+  | "EMAIL"
+  | "OTHER";
+export type LeadStatus =
+  | "NEW"
+  | "CONTACTED"
+  | "QUALIFIED"
+  | "PROPOSAL"
+  | "WON"
+  | "LOST";
 export type OpportunityStage =
   | "PROSPECTING"
   | "QUALIFICATION"
@@ -22,8 +34,19 @@ export type OpportunityStage =
   | "NEGOTIATION"
   | "CLOSED_WON"
   | "CLOSED_LOST";
-export type ContractStatus = "DRAFT" | "SIGNED" | "ACTIVE" | "EXPIRED" | "TERMINATED";
-export type ActivityType = "CALL" | "EMAIL" | "MEETING" | "NOTE" | "TASK" | "PROPOSAL_SENT";
+export type ContractStatus =
+  | "DRAFT"
+  | "SIGNED"
+  | "ACTIVE"
+  | "EXPIRED"
+  | "TERMINATED";
+export type ActivityType =
+  | "CALL"
+  | "EMAIL"
+  | "MEETING"
+  | "NOTE"
+  | "TASK"
+  | "PROPOSAL_SENT";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Customers
@@ -76,7 +99,10 @@ export type ListCustomersArgs = {
   sortOrder?: "asc" | "desc";
 };
 
-export type ListCustomersResponse = { items: CustomerItem[]; meta: PaginationMeta };
+export type ListCustomersResponse = {
+  items: CustomerItem[];
+  meta: PaginationMeta;
+};
 
 export type CreateCustomerRequest = {
   name: string;
@@ -113,7 +139,12 @@ export type LeadItem = {
   currency: string;
   probability: number;
   assignedToId: string | null;
-  assignedTo?: { id: string; firstName: string; lastName: string; email: string } | null;
+  assignedTo?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+  } | null;
   wonLostAt: string | null;
   createdBy: string | null;
   createdAt: string;
@@ -186,7 +217,12 @@ export type OpportunityItem = {
   probabilityPercent: number | null;
   expectedCloseDate: string | null;
   assignedToId: string | null;
-  assignedTo?: { id: string; firstName: string; lastName: string; email: string } | null;
+  assignedTo?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+  } | null;
   createdById: string | null;
   createdAt: string;
   updatedAt: string;
@@ -209,7 +245,10 @@ export type ListOppsArgs = {
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };
-export type ListOppsResponse = { items: OpportunityItem[]; meta: PaginationMeta };
+export type ListOppsResponse = {
+  items: OpportunityItem[];
+  meta: PaginationMeta;
+};
 
 export type CreateOpportunityRequest = {
   name: string;
@@ -239,7 +278,12 @@ export type ActivityItem = {
   activityAt: string;
   outcome: string | null;
   userId: string;
-  user?: { id: string; firstName: string; lastName: string; email: string } | null;
+  user?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+  } | null;
   leadId: string | null;
   customerId: string | null;
   opportunityId: string | null;
@@ -260,7 +304,10 @@ export type ListActivitiesArgs = {
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };
-export type ListActivitiesResponse = { items: ActivityItem[]; meta: PaginationMeta };
+export type ListActivitiesResponse = {
+  items: ActivityItem[];
+  meta: PaginationMeta;
+};
 
 export type CreateActivityRequest = {
   type: ActivityType;
@@ -305,7 +352,10 @@ export type ListContractsArgs = {
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };
-export type ListContractsResponse = { items: ContractItem[]; meta: PaginationMeta };
+export type ListContractsResponse = {
+  items: ContractItem[];
+  meta: PaginationMeta;
+};
 export type CreateContractRequest = {
   title: string;
   customerId: string;
@@ -327,7 +377,10 @@ export type UpdateContractRequest = Partial<CreateContractRequest> & {
 export const crmApi = apiSlice.injectEndpoints({
   endpoints: (builder) => ({
     // Customers
-    listCustomers: builder.query<Envelope<ListCustomersResponse>, ListCustomersArgs | void>({
+    listCustomers: builder.query<
+      Envelope<ListCustomersResponse>,
+      ListCustomersArgs | void
+    >({
       query: (args) => ({ url: "/crm/customers", params: args ?? {} }),
       providesTags: ["Customers"],
     }),
@@ -335,13 +388,26 @@ export const crmApi = apiSlice.injectEndpoints({
       query: (id) => ({ url: `/crm/customers/${id}` }),
       providesTags: (_, __, id) => [{ type: "Customers", id }],
     }),
-    createCustomer: builder.mutation<Envelope<{ customer: CustomerItem }>, CreateCustomerRequest>({
+    createCustomer: builder.mutation<
+      Envelope<{ customer: CustomerItem }>,
+      CreateCustomerRequest
+    >({
       query: (body) => ({ url: "/crm/customers", method: "POST", body }),
       invalidatesTags: ["Customers"],
     }),
-    updateCustomer: builder.mutation<Envelope<CustomerItem>, { id: string; body: UpdateCustomerRequest }>({
-      query: ({ id, body }) => ({ url: `/crm/customers/${id}`, method: "PATCH", body }),
-      invalidatesTags: (_, __, { id }) => ["Customers", { type: "Customers", id }],
+    updateCustomer: builder.mutation<
+      Envelope<CustomerItem>,
+      { id: string; body: UpdateCustomerRequest }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/customers/${id}`,
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: (_, __, { id }) => [
+        "Customers",
+        { type: "Customers", id },
+      ],
     }),
     deleteCustomer: builder.mutation<Envelope<{ ok: true }>, string>({
       query: (id) => ({ url: `/crm/customers/${id}`, method: "DELETE" }),
@@ -349,22 +415,37 @@ export const crmApi = apiSlice.injectEndpoints({
     }),
 
     // Contacts
-    listContacts: builder.query<Envelope<{ items: ContactItem[]; meta: PaginationMeta }>, {
-      customerId: string;
-      page?: number;
-      pageSize?: number;
-      search?: string;
-    }>({
+    listContacts: builder.query<
+      Envelope<{ items: ContactItem[]; meta: PaginationMeta }>,
+      {
+        customerId: string;
+        page?: number;
+        pageSize?: number;
+        search?: string;
+      }
+    >({
       query: ({ customerId, ...args }) => ({
         url: `/crm/customers/${customerId}/contacts`,
         params: args,
       }),
       providesTags: ["Contacts"],
     }),
-    createContact: builder.mutation<Envelope<ContactItem>, { customerId: string; body: Omit<CreateCustomerRequest, never> & {
-      firstName: string; lastName: string; email?: string; phone?: string;
-      designation?: string; department?: string; isPrimary?: boolean; notes?: string;
-    } }>({
+    createContact: builder.mutation<
+      Envelope<ContactItem>,
+      {
+        customerId: string;
+        body: Omit<CreateCustomerRequest, never> & {
+          firstName: string;
+          lastName: string;
+          email?: string;
+          phone?: string;
+          designation?: string;
+          department?: string;
+          isPrimary?: boolean;
+          notes?: string;
+        };
+      }
+    >({
       query: ({ customerId, body }) => ({
         url: `/crm/customers/${customerId}/contacts`,
         method: "POST",
@@ -372,11 +453,22 @@ export const crmApi = apiSlice.injectEndpoints({
       }),
       invalidatesTags: ["Contacts"],
     }),
-    updateContact: builder.mutation<Envelope<ContactItem>, {
-      id: string;
-      body: Partial<ContactItem> & { firstName?: string; lastName?: string; isPrimary?: boolean };
-    }>({
-      query: ({ id, body }) => ({ url: `/crm/contacts/${id}`, method: "PATCH", body }),
+    updateContact: builder.mutation<
+      Envelope<ContactItem>,
+      {
+        id: string;
+        body: Partial<ContactItem> & {
+          firstName?: string;
+          lastName?: string;
+          isPrimary?: boolean;
+        };
+      }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/contacts/${id}`,
+        method: "PATCH",
+        body,
+      }),
       invalidatesTags: ["Contacts"],
     }),
     deleteContact: builder.mutation<Envelope<{ ok: true }>, string>({
@@ -385,93 +477,158 @@ export const crmApi = apiSlice.injectEndpoints({
     }),
 
     // Leads
-    listLeads: builder.query<Envelope<ListLeadsResponse>, ListLeadsArgs | void>({
-      query: (args) => ({ url: "/crm/leads", params: args ?? {} }),
-      providesTags: ["Leads"],
-    }),
+    listLeads: builder.query<Envelope<ListLeadsResponse>, ListLeadsArgs | void>(
+      {
+        query: (args) => ({ url: "/crm/leads", params: args ?? {} }),
+        providesTags: ["Leads"],
+      },
+    ),
     getLead: builder.query<Envelope<LeadDetail>, string>({
       query: (id) => ({ url: `/crm/leads/${id}` }),
       providesTags: (_, __, id) => [{ type: "Leads", id }],
     }),
-    createLead: builder.mutation<Envelope<{ lead: LeadItem }>, CreateLeadRequest>({
+    createLead: builder.mutation<
+      Envelope<{ lead: LeadItem }>,
+      CreateLeadRequest
+    >({
       query: (body) => ({ url: "/crm/leads", method: "POST", body }),
       invalidatesTags: ["Leads"],
     }),
-    updateLead: builder.mutation<Envelope<LeadItem>, { id: string; body: UpdateLeadRequest }>({
-      query: ({ id, body }) => ({ url: `/crm/leads/${id}`, method: "PATCH", body }),
+    updateLead: builder.mutation<
+      Envelope<LeadItem>,
+      { id: string; body: UpdateLeadRequest }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/leads/${id}`,
+        method: "PATCH",
+        body,
+      }),
       invalidatesTags: (_, __, { id }) => ["Leads", { type: "Leads", id }],
     }),
     deleteLead: builder.mutation<Envelope<{ ok: true }>, string>({
       query: (id) => ({ url: `/crm/leads/${id}`, method: "DELETE" }),
       invalidatesTags: ["Leads"],
     }),
-    convertLead: builder.mutation<Envelope<ConvertLeadResponse>, {
-      id: string;
-      body: ConvertLeadRequest;
-    }>({
-      query: ({ id, body }) => ({ url: `/crm/leads/${id}/convert`, method: "POST", body }),
+    convertLead: builder.mutation<
+      Envelope<ConvertLeadResponse>,
+      {
+        id: string;
+        body: ConvertLeadRequest;
+      }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/leads/${id}/convert`,
+        method: "POST",
+        body,
+      }),
       invalidatesTags: ["Leads", "Customers", "Opportunities"],
     }),
-    patchLeadStage: builder.mutation<Envelope<LeadItem>, {
-      id: string;
-      body: { stage: LeadStatus; note?: string };
-    }>({
-      query: ({ id, body }) => ({ url: `/crm/leads/${id}/stage`, method: "PATCH", body }),
+    patchLeadStage: builder.mutation<
+      Envelope<LeadItem>,
+      {
+        id: string;
+        body: { stage: LeadStatus; note?: string };
+      }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/leads/${id}/stage`,
+        method: "PATCH",
+        body,
+      }),
       invalidatesTags: ["Leads"],
     }),
 
     // Opportunities
-    listOpportunities: builder.query<Envelope<ListOppsResponse>, ListOppsArgs | void>({
+    listOpportunities: builder.query<
+      Envelope<ListOppsResponse>,
+      ListOppsArgs | void
+    >({
       query: (args) => ({ url: "/crm/opportunities", params: args ?? {} }),
       providesTags: ["Opportunities"],
     }),
     getOpportunity: builder.query<Envelope<OpportunityDetail>, string>({
       query: (id) => ({ url: `/crm/opportunities/${id}` }),
     }),
-    createOpportunity: builder.mutation<Envelope<{ opportunity: OpportunityItem }>, CreateOpportunityRequest>({
+    createOpportunity: builder.mutation<
+      Envelope<{ opportunity: OpportunityItem }>,
+      CreateOpportunityRequest
+    >({
       query: (body) => ({ url: "/crm/opportunities", method: "POST", body }),
       invalidatesTags: ["Opportunities"],
     }),
-    updateOpportunity: builder.mutation<Envelope<OpportunityItem>, { id: string; body: UpdateOpportunityRequest }>({
-      query: ({ id, body }) => ({ url: `/crm/opportunities/${id}`, method: "PATCH", body }),
+    updateOpportunity: builder.mutation<
+      Envelope<OpportunityItem>,
+      { id: string; body: UpdateOpportunityRequest }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/opportunities/${id}`,
+        method: "PATCH",
+        body,
+      }),
       invalidatesTags: ["Opportunities"],
     }),
     deleteOpportunity: builder.mutation<Envelope<{ ok: true }>, string>({
       query: (id) => ({ url: `/crm/opportunities/${id}`, method: "DELETE" }),
       invalidatesTags: ["Opportunities"],
     }),
-    patchOppStage: builder.mutation<Envelope<OpportunityItem>, {
-      id: string;
-      body: PatchOppStageRequest;
-    }>({
-      query: ({ id, body }) => ({ url: `/crm/opportunities/${id}/stage`, method: "PATCH", body }),
+    patchOppStage: builder.mutation<
+      Envelope<OpportunityItem>,
+      {
+        id: string;
+        body: PatchOppStageRequest;
+      }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/opportunities/${id}/stage`,
+        method: "PATCH",
+        body,
+      }),
       invalidatesTags: ["Opportunities"],
     }),
 
     // Activities (append-only)
-    listActivities: builder.query<Envelope<ListActivitiesResponse>, ListActivitiesArgs | void>({
+    listActivities: builder.query<
+      Envelope<ListActivitiesResponse>,
+      ListActivitiesArgs | void
+    >({
       query: (args) => ({ url: "/crm/activities", params: args ?? {} }),
       providesTags: ["Activities"],
     }),
-    createActivity: builder.mutation<Envelope<ActivityItem>, CreateActivityRequest>({
+    createActivity: builder.mutation<
+      Envelope<ActivityItem>,
+      CreateActivityRequest
+    >({
       query: (body) => ({ url: "/crm/activities", method: "POST", body }),
       invalidatesTags: ["Activities", "Leads", "Customers", "Opportunities"],
     }),
 
     // Contracts
-    listContracts: builder.query<Envelope<ListContractsResponse>, ListContractsArgs | void>({
+    listContracts: builder.query<
+      Envelope<ListContractsResponse>,
+      ListContractsArgs | void
+    >({
       query: (args) => ({ url: "/crm/contracts", params: args ?? {} }),
       providesTags: ["Contracts"],
     }),
     getContract: builder.query<Envelope<ContractItem>, string>({
       query: (id) => ({ url: `/crm/contracts/${id}` }),
     }),
-    createContract: builder.mutation<Envelope<{ contract: ContractItem }>, CreateContractRequest>({
+    createContract: builder.mutation<
+      Envelope<{ contract: ContractItem }>,
+      CreateContractRequest
+    >({
       query: (body) => ({ url: "/crm/contracts", method: "POST", body }),
       invalidatesTags: ["Contracts"],
     }),
-    updateContract: builder.mutation<Envelope<ContractItem>, { id: string; body: UpdateContractRequest }>({
-      query: ({ id, body }) => ({ url: `/crm/contracts/${id}`, method: "PATCH", body }),
+    updateContract: builder.mutation<
+      Envelope<ContractItem>,
+      { id: string; body: UpdateContractRequest }
+    >({
+      query: ({ id, body }) => ({
+        url: `/crm/contracts/${id}`,
+        method: "PATCH",
+        body,
+      }),
       invalidatesTags: ["Contracts"],
     }),
     deleteContract: builder.mutation<Envelope<{ ok: true }>, string>({
@@ -485,14 +642,6 @@ export const crmApi = apiSlice.injectEndpoints({
 // IMPORTANT: Need to extend tagTypes in apiSlice? We do it below via mutation.
 // The apiSlice.createApi was already created with a fixed tagTypes array.
 // Extending at runtime is safe for RTK Query — we add types here.
-(apiSlice as unknown as { tagTypes: string[] }).tagTypes.push(
-  "Customers",
-  "Contacts",
-  "Leads",
-  "Opportunities",
-  "Activities",
-  "Contracts",
-);
 
 export const {
   useListCustomersQuery,

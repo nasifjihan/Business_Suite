@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -61,7 +61,10 @@ type UserFormValues = z.infer<typeof userFormSchema>;
 // ─────────────────────────────────────────────────────────────────────────────
 // Role → StatusBadge tone map (NO YELLOW/AMBER family per user profile!)
 // ─────────────────────────────────────────────────────────────────────────────
-const ROLE_TONE: Record<string, "violet" | "sky" | "rose" | "emerald" | "teal" | "slate"> = {
+const ROLE_TONE: Record<
+  string,
+  "violet" | "sky" | "rose" | "emerald" | "teal" | "slate"
+> = {
   SUPER_ADMIN: "violet",
   ADMIN: "sky",
   MANAGER: "sky",
@@ -71,7 +74,7 @@ const ROLE_TONE: Record<string, "violet" | "sky" | "rose" | "emerald" | "teal" |
   VIEWER: "slate",
 };
 
-export default function UsersPage() {
+function UsersPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const canCreate = useHasPermission({ one: "users.create" });
@@ -86,7 +89,9 @@ export default function UsersPage() {
       page,
       pageSize,
       search: searchParams?.get("search") ?? "",
-      status: (searchParams?.get("status") as "ACTIVE" | "INACTIVE" | undefined) || undefined,
+      status:
+        (searchParams?.get("status") as "ACTIVE" | "INACTIVE" | undefined) ||
+        undefined,
       roleId: searchParams?.get("roleId") || undefined,
       sortBy: searchParams?.get("sortBy") ?? "createdAt",
       sortOrder: (searchParams?.get("sortOrder") as "asc" | "desc") ?? "desc",
@@ -110,39 +115,49 @@ export default function UsersPage() {
     return m;
   }, [roles]);
 
-  const roleOptions = useMemo(() =>
-    roles.map((r) => ({ value: r.id, label: r.displayName })),
-  [roles]);
+  const roleOptions = useMemo(
+    () => roles.map((r) => ({ value: r.id, label: r.displayName })),
+    [roles],
+  );
 
-  const statusOptions = useMemo(() => [
-    { value: "", label: "All statuses" },
-    { value: "ACTIVE", label: "Active" },
-    { value: "INACTIVE", label: "Inactive" },
-  ], []);
+  const statusOptions = useMemo(
+    () => [
+      { value: "", label: "All statuses" },
+      { value: "ACTIVE", label: "Active" },
+      { value: "INACTIVE", label: "Inactive" },
+    ],
+    [],
+  );
 
-  const roleFilterOptions = useMemo(() => [
-    { value: "", label: "All roles" },
-    ...roleOptions,
-  ], [roleOptions]);
+  const roleFilterOptions = useMemo(
+    () => [{ value: "", label: "All roles" }, ...roleOptions],
+    [roleOptions],
+  );
 
   // ── Helpers: update filter URL params (shared with GlobalTable URL sync) ──
-  const buildParams = useCallback((patch: Record<string, string | undefined>) => {
-    const params = new URLSearchParams(searchParams?.toString() ?? "");
-    Object.entries(patch).forEach(([k, v]) => {
-      if (v === undefined || v === "" || v === null) {
-        params.delete(k);
-      } else {
-        params.set(k, v);
-      }
-    });
-    params.delete("page"); // Reset to page 1 on any filter change
-    return params.toString();
-  }, [searchParams]);
+  const buildParams = useCallback(
+    (patch: Record<string, string | undefined>) => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      Object.entries(patch).forEach(([k, v]) => {
+        if (v === undefined || v === "" || v === null) {
+          params.delete(k);
+        } else {
+          params.set(k, v);
+        }
+      });
+      params.delete("page"); // Reset to page 1 on any filter change
+      return params.toString();
+    },
+    [searchParams],
+  );
 
-  const pushParams = useCallback((patch: Record<string, string | undefined>) => {
-    const qs = buildParams(patch);
-    router.push(`?${qs}`, { scroll: false });
-  }, [buildParams, router]);
+  const pushParams = useCallback(
+    (patch: Record<string, string | undefined>) => {
+      const qs = buildParams(patch);
+      router.push(`?${qs}`, { scroll: false });
+    },
+    [buildParams, router],
+  );
 
   // ── Modals ─────────────────────────────────────────────────────────────────
   type ModalState =
@@ -346,9 +361,7 @@ export default function UsersPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() =>
-                      setModal({ kind: "deactivate", user: u })
-                    }
+                    onClick={() => setModal({ kind: "deactivate", user: u })}
                     disabled={isSelf}
                     title={isSelf ? "Cannot deactivate yourself" : ""}
                     className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-900"
@@ -360,9 +373,7 @@ export default function UsersPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() =>
-                      setModal({ kind: "activate", user: u })
-                    }
+                    onClick={() => setModal({ kind: "activate", user: u })}
                     className="text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900"
                   >
                     <Power className="w-3.5 h-3.5" />
@@ -393,10 +404,7 @@ export default function UsersPage() {
               disabled={isFetching}
             >
               <RefreshCw
-                className={cn(
-                  "w-4 h-4",
-                  isFetching && "animate-spin"
-                )}
+                className={cn("w-4 h-4", isFetching && "animate-spin")}
               />
               Refresh
             </Button>
@@ -469,11 +477,7 @@ export default function UsersPage() {
         size="md"
         footer={
           <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={closeModal}
-            >
+            <Button type="button" variant="outline" onClick={closeModal}>
               Cancel
             </Button>
             <Button
@@ -517,7 +521,9 @@ export default function UsersPage() {
             label="Role"
             required
             value={form.watch("roleId")}
-            onChange={(v) => form.setValue("roleId", v, { shouldValidate: true })}
+            onChange={(v) =>
+              form.setValue("roleId", v, { shouldValidate: true })
+            }
             options={roleOptions}
             placeholder="Select a role…"
             error={form.formState.errors.roleId?.message}
@@ -531,12 +537,10 @@ export default function UsersPage() {
           {createState.isError && (
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
               {(
-                (
-                  createState.error as {
-                    data?: { error?: { message?: string } };
-                  }
-                ).data?.error?.message ?? "Failed to create user."
-              )}
+                createState.error as {
+                  data?: { error?: { message?: string } };
+                }
+              ).data?.error?.message ?? "Failed to create user."}
             </div>
           )}
         </form>
@@ -648,7 +652,9 @@ export default function UsersPage() {
             label="Role"
             required
             value={form.watch("roleId")}
-            onChange={(v) => form.setValue("roleId", v, { shouldValidate: true })}
+            onChange={(v) =>
+              form.setValue("roleId", v, { shouldValidate: true })
+            }
             options={roleOptions}
             placeholder="Select a role…"
             error={form.formState.errors.roleId?.message}
@@ -662,12 +668,10 @@ export default function UsersPage() {
           {updateState.isError && (
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
               {(
-                (
-                  updateState.error as {
-                    data?: { error?: { message?: string } };
-                  }
-                ).data?.error?.message ?? "Failed to update user."
-              )}
+                updateState.error as {
+                  data?: { error?: { message?: string } };
+                }
+              ).data?.error?.message ?? "Failed to update user."}
             </div>
           )}
         </form>
@@ -710,5 +714,13 @@ export default function UsersPage() {
         onConfirm={handleActivate}
       />
     </div>
+  );
+}
+
+export default function UsersPage() {
+  return (
+    <Suspense fallback={<div>Loading users...</div>}>
+      <UsersPageContent />
+    </Suspense>
   );
 }

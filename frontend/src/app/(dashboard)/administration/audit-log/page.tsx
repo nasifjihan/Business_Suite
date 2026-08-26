@@ -1,9 +1,21 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  FileText, RefreshCw, UserCircle2, Calendar, Tag, Zap, Info, Copy, CheckCircle2, Globe, Monitor, ShieldCheck } from "lucide-react";
+  FileText,
+  RefreshCw,
+  UserCircle2,
+  Calendar,
+  Tag,
+  Zap,
+  Info,
+  Copy,
+  CheckCircle2,
+  Globe,
+  Monitor,
+  ShieldCheck,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   useListAuditLogsQuery,
@@ -18,11 +30,20 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { PageHeader } from "@/components/common/PageHeader";
 import { GlobalTable } from "@/components/tables/GlobalTable";
-import { createColumns, getPaginationParamsFromSearchParams } from "@/lib/table-utils";
-import { StatusBadge, type StatusBadgeTone } from "@/components/common/StatusBadge";
+import {
+  createColumns,
+  getPaginationParamsFromSearchParams,
+} from "@/lib/table-utils";
+import {
+  StatusBadge,
+  type StatusBadgeTone,
+} from "@/components/common/StatusBadge";
 import { DateDisplay } from "@/components/common/DateDisplay";
 import { SearchInput } from "@/components/tables/SearchInput";
-import { GlobalSelect, type SelectOption } from "@/components/form/GlobalSelect";
+import {
+  GlobalSelect,
+  type SelectOption,
+} from "@/components/form/GlobalSelect";
 import { GlobalDatePicker } from "@/components/form/GlobalDatePicker";
 
 const ACTION_TONES: Record<AuditLogAction, StatusBadgeTone> = {
@@ -79,7 +100,7 @@ function JsonBlock({ data }: { data: unknown }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const text = useMemo(
     () => (data == null ? "—" : JSON.stringify(data, null, 2)),
-    [data]
+    [data],
   );
 
   const copy = async (k: string) => {
@@ -92,14 +113,16 @@ function JsonBlock({ data }: { data: unknown }) {
     }
   };
 
-  const empty = data == null || (typeof data === "object" && Object.keys(data as object).length === 0);
+  const empty =
+    data == null ||
+    (typeof data === "object" && Object.keys(data as object).length === 0);
 
   if (empty) {
     return (
       <div className="text-xs text-slate-400 italic py-3 text-center">
-      <Info className="w-3.5 h-3.5 inline mr-1.5 opacity-70" />
-      No data captured for this side of the change.
-    </div>
+        <Info className="w-3.5 h-3.5 inline mr-1.5 opacity-70" />
+        No data captured for this side of the change.
+      </div>
     );
   }
 
@@ -128,7 +151,7 @@ function JsonBlock({ data }: { data: unknown }) {
   );
 }
 
-export default function AuditLogPage() {
+function AuditLogContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -140,24 +163,37 @@ export default function AuditLogPage() {
   });
 
   const [searchTerm, setSearchTerm] = useState(baseParams.search ?? "");
-  const [entityType, setEntityType] = useState<string | undefined>(searchParams.get("entityType") ?? undefined);
-  const [action, setAction] = useState<string | undefined>(searchParams.get("action") ?? undefined);
-  const [userId, setUserId] = useState<string | undefined>(searchParams.get("userId") ?? undefined);
-  const [dateFrom, setDateFrom] = useState<string | undefined>(searchParams.get("dateFrom") ?? undefined);
-  const [dateTo, setDateTo] = useState<string | undefined>(searchParams.get("dateTo") ?? undefined);
+  const [entityType, setEntityType] = useState<string | undefined>(
+    searchParams.get("entityType") ?? undefined,
+  );
+  const [action, setAction] = useState<string | undefined>(
+    searchParams.get("action") ?? undefined,
+  );
+  const [userId, setUserId] = useState<string | undefined>(
+    searchParams.get("userId") ?? undefined,
+  );
+  const [dateFrom, setDateFrom] = useState<string | undefined>(
+    searchParams.get("dateFrom") ?? undefined,
+  );
+  const [dateTo, setDateTo] = useState<string | undefined>(
+    searchParams.get("dateTo") ?? undefined,
+  );
 
-  const filters: ListAuditLogsArgs = useMemo(() => ({
-    page: baseParams.page,
-    pageSize: baseParams.pageSize,
-    sortBy: baseParams.sortBy,
-    sortOrder: baseParams.sortOrder,
-    search: searchTerm || undefined,
-    entityType: entityType || undefined,
-    action: action ? (action as AuditLogAction) : undefined,
-    userId: userId || undefined,
-    dateFrom: dateFrom || undefined,
-    dateTo: dateTo || undefined,
-  }), [baseParams, searchTerm, entityType, action, userId, dateFrom, dateTo]);
+  const filters: ListAuditLogsArgs = useMemo(
+    () => ({
+      page: baseParams.page,
+      pageSize: baseParams.pageSize,
+      sortBy: baseParams.sortBy,
+      sortOrder: baseParams.sortOrder,
+      search: searchTerm || undefined,
+      entityType: entityType || undefined,
+      action: action ? (action as AuditLogAction) : undefined,
+      userId: userId || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    }),
+    [baseParams, searchTerm, entityType, action, userId, dateFrom, dateTo],
+  );
 
   const {
     data: auditRes,
@@ -168,10 +204,14 @@ export default function AuditLogPage() {
   const { data: usersRes } = useListUsersQuery({ pageSize: 100 });
   const users = usersRes?.data?.items ?? [];
 
-  const userOptions: SelectOption[] = useMemo(() => users.map(u => ({
-    value: u.id,
-    label: `${u.firstName} ${u.lastName} (${u.email})`,
-  })), [users]);
+  const userOptions: SelectOption[] = useMemo(
+    () =>
+      users.map((u) => ({
+        value: u.id,
+        label: `${u.firstName} ${u.lastName} (${u.email})`,
+      })),
+    [users],
+  );
 
   const userName = (row: AuditLogItem) => {
     if (row.user) {
@@ -182,8 +222,8 @@ export default function AuditLogPage() {
 
   const userInitials = (row: AuditLogItem) =>
     row.user
-      ? `${row.user.firstName?.[0] ?? ""}${row.user.lastName?.[0] ?? ""}`
-          .toUpperCase() || "?"
+      ? `${row.user.firstName?.[0] ?? ""}${row.user.lastName?.[0] ?? ""}`.toUpperCase() ||
+        "?"
       : "?";
 
   function syncFiltersToUrl(patch: Record<string, string | undefined>) {
@@ -275,7 +315,9 @@ export default function AuditLogPage() {
         header: "Action",
         cell: ({ row: { original: r } }) => (
           <StatusBadge
-            tone={ACTION_TONES[r.action as keyof typeof ACTION_TONES] ?? "slate"}
+            tone={
+              ACTION_TONES[r.action as keyof typeof ACTION_TONES] ?? "slate"
+            }
             icon={ACTION_ICONS[r.action as keyof typeof ACTION_ICONS]}
             size="sm"
             label={r.action.replace("_", " ")}
@@ -290,9 +332,7 @@ export default function AuditLogPage() {
           <div className="flex items-start gap-2 min-w-0">
             <Tag className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
             <div className="min-w-0">
-              <p className="text-xs font-medium">
-                {r.entityType ?? "—"}
-              </p>
+              <p className="text-xs font-medium">{r.entityType ?? "—"}</p>
               {r.entityId && (
                 <p
                   className="text-[10px] text-slate-500 font-mono truncate max-w-[200px]"
@@ -400,10 +440,7 @@ export default function AuditLogPage() {
             disabled={isFetching}
           >
             <RefreshCw
-              className={cn(
-                "w-4 h-4",
-                isFetching && "animate-spin"
-              )}
+              className={cn("w-4 h-4", isFetching && "animate-spin")}
             />
             Refresh
           </Button>
@@ -469,5 +506,13 @@ export default function AuditLogPage() {
         getRowId={(r) => r.id}
       />
     </div>
+  );
+}
+
+export default function AuditLogPage() {
+  return (
+    <Suspense fallback={<div>Loading audit log...</div>}>
+      <AuditLogContent />
+    </Suspense>
   );
 }
