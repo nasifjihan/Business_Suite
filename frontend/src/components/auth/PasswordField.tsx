@@ -41,10 +41,10 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
     const strengthLabels = ["Too weak", "Weak", "Fair", "Good", "Strong"];
     const strengthColors = [
       "bg-slate-200",
-      "bg-red-400",
-      "bg-orange-400",
-      "bg-yellow-400",
-      "bg-green-500",
+      "bg-rose-400",
+      "bg-violet-400",
+      "bg-sky-400",
+      "bg-emerald-500",
     ];
 
     function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -119,9 +119,9 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
                   className={cn(
                     "font-medium",
                     strength <= 1 && "text-rose-500",
-                    strength === 2 && "text-orange-500",
-                    strength === 3 && "text-yellow-600",
-                    strength === 4 && "text-green-600"
+                    strength === 2 && "text-violet-500",
+                    strength === 3 && "text-sky-600",
+                    strength === 4 && "text-emerald-600"
                   )}
                 >
                   {strengthLabels[strength]}

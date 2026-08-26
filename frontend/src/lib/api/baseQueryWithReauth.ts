@@ -1,19 +1,20 @@
 /**
  * baseQueryWithReauth: transparent token refresh middleware for RTK Query.
  *
- * Flow (single request):
- *   1. Normal request → 200 → return data. Done.
- *   2. Normal request → 401 Unauthorized?
- *        - We already tried a refresh retry for this request? → give up (clear credentials → redirect /login)
- *        - No retry yet? → ENTER refresh mutex.
+ * SHARED SINGLETON mutex prevents double-refresh races. Two public entry points:
+ *   1) The middleware baseQueryWithReauth — called automatically by RTK on every endpoint.
+ *      If any request 401s, mutex-acquire refresh → write tokens → retry once.
+ *   2) `refreshAccessToken({ dispatch, getState })` — public helper exported for any
+ *      caller OUTSIDE the RTK middleware (e.g., AuthHydrationProvider on page mount).
+ *      Accepts dispatch/getState explicitly from the caller — NO global singleton import
+ *      required, so it works with any store instance (SSR-safe, works with StoreProvider).
  *
- * Mutex singleton: 10 simultaneous failing requests on page load shouldn't trigger 10 refresh calls.
- *                  Only the first request does POST /auth/refresh; all 9 others await that single promise.
- *   3. Refresh SUCCESS → dispatch(authSlice.updateAccessToken(newToken)) → retry original request ONCE
- *      with new token.
- *   4. Refresh FAILS (cookie missing, cookie revoked, reuse detected, family banned)
- *      → dispatch(authSlice.clearCredentials())
- *      → window.location.replace('/login') (hard redirect, clears RTK cache cleanly)
+ *      Inside React components, do:
+ *        const store = useStore<RootState, AppDispatch>();
+ *        const payload = await refreshAccessToken(store);
+ *
+ * Auth failure path: Both the middleware and public helper run the SAME redirect path:
+ *   dispatch(clearCredentials()) + window.location.replace('/login?expired=1').
  */
 import { fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type {
@@ -22,10 +23,27 @@ import type {
   FetchBaseQueryError,
 } from "@reduxjs/toolkit/query";
 import { Mutex } from "async-mutex";
-import { clearCredentials, updateAccessToken } from "@/store/slices/authSlice";
-import { RootState } from "@/store/store";
+import {
+  clearCredentials,
+  setCredentials,
+  type AuthUser,
+} from "@/store/slices/authSlice";
+import type { RootState } from "@/store/store";
 
 const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api/v1";
+
+export type RefreshSuccessPayload = {
+  accessToken: string;
+  tokenType: "Bearer";
+  expiresInSec: number;
+  user: AuthUser;
+  permissions: string[];
+};
+
+export type StoreLike = {
+  dispatch: (action: any) => any;
+  getState: () => unknown;
+};
 
 const rawBaseQuery = fetchBaseQuery({
   baseUrl,
@@ -40,87 +58,137 @@ const rawBaseQuery = fetchBaseQuery({
   },
 });
 
-// Singleton mutex — prevents refresh-token storms when 10 tabs/components 401 simultaneously.
+// SHARED singleton mutex across BOTH middleware and helper.
 const mutex = new Mutex();
+
+function enrichUser(raw: Record<string, unknown> | AuthUser): AuthUser {
+  const u = raw as AuthUser & { firstName?: string; lastName?: string; fullName?: string };
+  if (!u.fullName) {
+    const parts = [u.firstName, u.lastName].filter(Boolean);
+    (u as AuthUser & { fullName: string }).fullName = parts.join(" ").trim();
+  }
+  return u;
+}
+
+async function handleRefreshSuccess(
+  dispatch: (a: any) => any,
+  raw: unknown
+): Promise<RefreshSuccessPayload | null> {
+  const envelope = raw as { success?: boolean; data?: Record<string, unknown> };
+  if (
+    envelope &&
+    envelope.success === true &&
+    envelope.data &&
+    typeof envelope.data === "object" &&
+    typeof (envelope.data.accessToken as unknown) === "string" &&
+    envelope.data.user &&
+    typeof envelope.data.user === "object"
+  ) {
+    const d = envelope.data;
+    const user = enrichUser(d.user as Record<string, unknown>);
+    const permissions = Array.isArray(d.permissions)
+      ? (d.permissions as string[])
+      : [];
+    dispatch(
+      setCredentials({
+        accessToken: d.accessToken as string,
+        user,
+        permissions,
+      })
+    );
+    return {
+      accessToken: d.accessToken as string,
+      tokenType: "Bearer",
+      expiresInSec: typeof d.expiresInSec === "number" ? d.expiresInSec : 0,
+      user,
+      permissions,
+    };
+  }
+  return null;
+}
+
+function hardLogout(dispatch: (a: any) => any): null {
+  dispatch(clearCredentials());
+  if (typeof window !== "undefined") {
+    window.location.replace("/login?expired=1");
+  }
+  return null;
+}
+
+async function refreshInternal(
+  api: StoreLike,
+  extraOptions: unknown
+): Promise<RefreshSuccessPayload | null> {
+  await mutex.waitForUnlock();
+  if (!mutex.isLocked()) {
+    const release = await mutex.acquire();
+    try {
+      const refreshResult = await rawBaseQuery(
+        { url: "/auth/refresh", method: "POST" },
+        api as never,
+        extraOptions as never
+      );
+      if (refreshResult.error) {
+        return hardLogout(api.dispatch);
+      }
+      const payload = await handleRefreshSuccess(
+        api.dispatch,
+        refreshResult.data
+      );
+      if (!payload) {
+        return hardLogout(api.dispatch);
+      }
+      return payload;
+    } finally {
+      release();
+    }
+  }
+  // Another caller already held the mutex. Wait for it, then return what Redux already has.
+  await mutex.waitForUnlock();
+  const state = api.getState() as RootState;
+  if (state.auth.isAuthenticated && state.auth.accessToken && state.auth.user) {
+    return {
+      accessToken: state.auth.accessToken,
+      tokenType: "Bearer",
+      expiresInSec: 0,
+      user: state.auth.user,
+      permissions: state.auth.permissions ?? [],
+    };
+  }
+  return null;
+}
+
+/**
+ * Public helper — run POST /auth/refresh using the shared mutex.
+ * Caller passes store reference (dispatch + getState).
+ *
+ * Inside React hooks use:
+ *   const store = useStore<RootState, AppDispatch>();
+ *   const payload = await refreshAccessToken(store);
+ */
+export async function refreshAccessToken(
+  store: StoreLike
+): Promise<RefreshSuccessPayload | null> {
+  return refreshInternal(store, {});
+}
 
 export const baseQueryWithReauth: BaseQueryFn<
   string | FetchArgs,
   unknown,
   FetchBaseQueryError
 > = async (args, api, extraOptions) => {
-  // await mutex lock only UNTIL we get it (non-blocking check later)
   await mutex.waitForUnlock();
-
-  let result = await rawBaseQuery(args, api, extraOptions);
-
-  const isUnauthorized = result.error?.status === 401;
-
-  if (!isUnauthorized) {
+  const result = await rawBaseQuery(args, api, extraOptions);
+  if (result.error?.status !== 401) {
     return result;
   }
-
-  // ─── 401 detected. Decide: first attempt → refresh; second attempt → logout ───
-  if (!mutex.isLocked()) {
-    const release = await mutex.acquire();
-
-    try {
-      const refreshResult = await rawBaseQuery(
-        {
-          url: "/auth/refresh",
-          method: "POST",
-        },
-        api,
-        extraOptions
-      );
-
-      if (
-        refreshResult.data &&
-        typeof refreshResult.data === "object" &&
-        "success" in refreshResult.data &&
-        (refreshResult.data as { success?: unknown }).success === true &&
-        "data" in refreshResult.data &&
-        typeof (refreshResult.data as { data?: unknown }).data === "object" &&
-        (refreshResult.data as { data: { accessToken?: unknown } }).data?.accessToken &&
-        typeof (refreshResult.data as { data: { accessToken: string } }).data.accessToken === "string"
-      ) {
-        // Refresh worked: update Redux access token memory → retry original query
-        const newToken = (refreshResult.data as { data: { accessToken: string } }).data.accessToken;
-        api.dispatch(updateAccessToken(newToken));
-
-        // Retry original once. Second 401 will fall to the else branch (mutex unlocked by other flow already failed).
-        const retry = await rawBaseQuery(args, api, extraOptions);
-        if (retry.error?.status === 401) {
-          // Still 401 even after refresh → clear + redirect
-          api.dispatch(clearCredentials());
-          if (typeof window !== "undefined") {
-            window.location.replace("/login?expired=1");
-          }
-        }
-        return retry;
-      } else {
-        // Refresh itself failed (cookie missing / revoked / banned family)
-        api.dispatch(clearCredentials());
-        if (typeof window !== "undefined") {
-          window.location.replace("/login?expired=1");
-        }
-        return refreshResult as typeof result;
-      }
-    } finally {
-      release();
-    }
-  } else {
-    // Mutex LOCKED — another query is already running refresh.
-    // Wait for it to finish, then retry once without calling refresh ourselves.
-    await mutex.waitForUnlock();
-    const retry = await rawBaseQuery(args, api, extraOptions);
-    if (retry.error?.status === 401) {
-      api.dispatch(clearCredentials());
-      if (typeof window !== "undefined") {
-        window.location.replace("/login?expired=1");
-      }
-    }
-    return retry;
+  const refreshed = await refreshInternal(api, extraOptions);
+  if (!refreshed) return result;
+  const retry = await rawBaseQuery(args, api, extraOptions);
+  if (retry.error?.status === 401) {
+    hardLogout(api.dispatch);
   }
+  return retry;
 };
 
-export { baseUrl, rawBaseQuery };
+export { baseUrl, rawBaseQuery, mutex };

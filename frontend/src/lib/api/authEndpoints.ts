@@ -22,12 +22,15 @@ export interface LoginResponseData {
   tokenType: "Bearer";
   expiresInSec: number;
   user: AuthUser;
+  permissions: string[];
 }
 
 export interface RefreshResponseData {
   accessToken: string;
   tokenType: "Bearer";
   expiresInSec: number;
+  user: AuthUser;
+  permissions: string[];
 }
 
 export interface ForgotPasswordRequest {

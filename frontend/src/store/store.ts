@@ -24,4 +24,23 @@ export type AppStore = ReturnType<typeof makeStore>;
 export type RootState = ReturnType<AppStore["getState"]>;
 export type AppDispatch = AppStore["dispatch"];
 
+// Client-side singleton. For module-level use (outside React tree) call getStoreSingleton().
+// This avoids SSR issues (each server request gets its own makeStore via StoreProvider context),
+// while still giving us a stable shared store reference in the browser for things like
+// the refreshAccessToken helper that runs outside RTK middleware.
+let clientSingleton: AppStore | undefined;
+
+export function getStoreSingleton(): AppStore {
+  if (typeof window === "undefined") {
+    return makeStore();
+  }
+  if (!clientSingleton) {
+    clientSingleton = makeStore();
+    setupListeners(clientSingleton.dispatch);
+  }
+  return clientSingleton;
+}
+
+// One-time listener bootstrap using the FIRST created store on client
+// (StoreProvider may override with its own instance; listeners are idempotent).
 setupListeners(makeStore().dispatch);

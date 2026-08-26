@@ -27,12 +27,12 @@ export function buildRefreshCookieOptions(maxAgeSec?: number): CookieOptions {
   const isProd = CONFIG.nodeEnv === "production";
   const seconds = maxAgeSec ?? expiresInToSeconds(CONFIG.jwt.refreshExpiresIn);
   return {
-    httpOnly: true,          // JavaScript CANNOT touch this cookie — blocks XSS theft.
-    secure: isProd,          // HTTPS only in production. Localhost (http) can carry it without secure flag.
-    sameSite: isProd ? "strict" : "lax", // Cross-site POST forgery protection. LAX = localhost OK across ports.
-    path: "/api/v1/auth",    // Cookie only sent to auth endpoints. Reduces exposure surface.
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? "strict" : "lax",
+    path: "/",
     domain: CONFIG.cors.cookieDomain === "localhost" ? undefined : CONFIG.cors.cookieDomain,
-    maxAge: seconds,         // Browsers respect max-age; 0 deletes on logout.
+    maxAge: seconds,
   };
 }
 

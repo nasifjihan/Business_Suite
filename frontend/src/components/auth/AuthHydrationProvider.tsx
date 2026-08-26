@@ -1,33 +1,40 @@
 /**
- * AuthHydrationProvider: on first client-side app mount, call GET /auth/me
- * with credentials:'include'. This sends the HTTP-only refresh cookie.
+ * AuthHydrationProvider — final race-free version.
  *
- * Expected results:
- *   200 → Backend: cookie valid → backend /me needs auth header but /me endpoint
- *          is AUTHENTICATED — actually /me expects Bearer access token, doesn't
- *          accept refresh cookie. That means page-reload hydration without access
- *          token would return 401.
+ * On first client mount: call refreshAccessToken(store), the SHARED mutex-locked
+ * helper exported from baseQueryWithReauth.ts. Because the helper shares the SAME
+ * module-level Mutex singleton that RTK's auto-refresh middleware uses, there is
+ * ZERO possibility of two parallel POST /auth/refresh calls within the same JS
+ * tab context. Backend also tolerates cross-tab races via a 5s reuse-detection
+ * tolerance window. The two combined eliminate the "this refresh token was used
+ * twice" reuse detection → family-ban loop permanently.
  *
- * CORRECTED design:
- *   - hydrateFirstMount() calls `/auth/refresh` (which DOES use refresh cookie, no Bearer needed).
- *   - If refresh succeeds → new accessToken in Redux + getUser data via /me call.
- *   - If refresh fails → user state stays null (not logged in).
+ * refreshAccessToken(store):
+ *   - Commits setCredentials({accessToken, user, fullName enriched, permissions})
+ *     into the SAME store React is rendering from BEFORE returning.
+ *   - No second /me query required. No batched state race possible.
+ *   - Response envelope already contains user + permissions from backend (added
+ *     in LoginResponseDto / RefreshResponseDto Phase 6 fixes).
  */
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { useStore } from "react-redux";
 import { usePathname, useRouter } from "next/navigation";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setHydratedUser, setCredentials, clearCredentials } from "@/store/slices/authSlice";
-import { useMeQuery, useRefreshMutation } from "@/lib/api/authEndpoints";
-
-const PUBLIC_PATHS = new Set<string>([
-  "/", "/features", "/pricing", "/contact",
-  "/login", "/forgot-password", "/reset-password",
-]);
+import { setHydratedUser } from "@/store/slices/authSlice";
+import { refreshAccessToken } from "@/lib/api/baseQueryWithReauth";
+import type { RootState } from "@/store/store";
 
 const DASHBOARD_PATHS_REQUIRING_AUTH = new Set<string>([
-  "/dashboard", "/crm", "/inventory", "/pos", "/sales", "/hrm", "/admin", "/change-password",
+  "/dashboard",
+  "/crm",
+  "/inventory",
+  "/pos",
+  "/sales",
+  "/hrm",
+  "/admin",
+  "/change-password",
 ]);
 
 function startsWithAny(path: string, prefixes: Set<string>): boolean {
@@ -36,96 +43,25 @@ function startsWithAny(path: string, prefixes: Set<string>): boolean {
   return false;
 }
 
-function useHydrateAuth() {
-  const dispatch = useAppDispatch();
-  const hydrating = useAppSelector((s) => s.auth.hydrating);
-  const pathname = usePathname();
-  const router = useRouter();
-  const [meTrigger, setMeTrigger] = useState<boolean>(false);
-
-  // 1. First, run refresh (uses refresh cookie, no Bearer needed):
-  const [refreshTrigger, refreshState] = useRefreshMutation();
-
-  const meRes = useMeQuery(undefined, { skip: !meTrigger });
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // Attempt refresh. Returns {ok:true, new access token} OR error.
-        const refreshOut = await refreshTrigger();
-        if (cancelled) return;
-        if ("data" in refreshOut && refreshOut.data?.success) {
-          dispatch(
-            setCredentials({
-              accessToken: refreshOut.data.data.accessToken,
-              user: {
-                id: "",
-                email: "",
-                firstName: "",
-                lastName: "",
-                fullName: "",
-                avatarUrl: null,
-                role: "VIEWER",
-                roleId: null,
-                status: "ACTIVE",
-                mustChangePassword: false,
-                createdAt: "",
-                lastLoginAt: null,
-              },
-            })
-          );
-          // Now trigger me query to fill user profile.
-          setMeTrigger(true);
-        } else {
-          // Refresh failed = user NOT logged in. Finalize state.
-          dispatch(setHydratedUser({ user: null }));
-        }
-      } catch (e) {
-        dispatch(setHydratedUser({ user: null }));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 2. Once /me returns with user data, populate it.
-  useEffect(() => {
-    if (meRes.currentData?.success && meRes.currentData.data) {
-      const payload = meRes.currentData.data;
-      const u = payload.user;
-      const fullName = `${u.firstName} ${u.lastName}`.trim();
-      dispatch(
-        setHydratedUser({
-          user: { ...u, fullName },
-          permissions: payload.permissions ?? [],
-        })
-      );
-    }
-  }, [dispatch, meRes.currentData]);
-
-  return { hydrating };
-}
-
-export default function AuthHydrationProvider({ children }: { children: ReactNode }) {
+export default function AuthHydrationProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const store = useStore<RootState>();
   const dispatch = useAppDispatch();
   const hydrating = useAppSelector((s) => s.auth.hydrating);
   const isAuthenticated = useAppSelector((s) => s.auth.isAuthenticated);
-  const forceChangePassword = useAppSelector((s) => s.auth.forceChangePassword);
+  const forceChangePassword = useAppSelector(
+    (s) => s.auth.forceChangePassword
+  );
   const pathname = usePathname();
   const router = useRouter();
-  const [meTrigger, setMeTrigger] = useState<boolean>(false);
-  const [refreshTrigger, refreshState] = useRefreshMutation();
-  const meRes = useMeQuery(undefined, { skip: !meTrigger });
 
-  // ─────────────────────────────────────────────────────────────────────
-  // Phase 2: Auth hydrate runs ONCE on first client mount.
+  // Hydrate once client-side. Shared mutex prevents concurrent refresh with
+  // any in-flight 401-triggered refresh from RTK queries that fire in parallel
+  // during layout mount (CRM overview cards, inventory stats, etc.).
   useEffect(() => {
-    // Skip silent refresh on public auth pages — the user hasn't logged in yet.
-    // This avoids spurious 401s (and noisy backend logs) when loading
-    // /login, /forgot-password, or /reset-password with no valid cookie.
     const onPublicAuth =
       pathname === "/login" ||
       pathname === "/forgot-password" ||
@@ -137,72 +73,36 @@ export default function AuthHydrationProvider({ children }: { children: ReactNod
 
     let cancelled = false;
     (async () => {
-      try {
-        const refreshOut = await refreshTrigger();
-        if (cancelled) return;
-        if ("data" in refreshOut && refreshOut.data?.success) {
-          const accessToken = refreshOut.data.data.accessToken;
-          // Temporary minimal user object until /me returns.
-          dispatch(setCredentials({
-            accessToken,
-            user: {
-              id: "",
-              email: "",
-              firstName: "",
-              lastName: "",
-              fullName: "",
-              avatarUrl: null,
-              role: "VIEWER",
-              roleId: null,
-              status: "ACTIVE",
-              mustChangePassword: false,
-              createdAt: "",
-              lastLoginAt: null,
-            },
-          }));
-          setMeTrigger(true);
-        } else {
-          dispatch(setHydratedUser({ user: null }));
-        }
-      } catch {
+      const payload = await refreshAccessToken(store);
+      if (cancelled) return;
+      if (payload) {
+        // refreshAccessToken already committed setCredentials(...).
+        // Signal hydration finished so guards/skeletons turn off.
+        dispatch(
+          setHydratedUser({
+            user: payload.user,
+            permissions: payload.permissions,
+          })
+        );
+      } else {
         dispatch(setHydratedUser({ user: null }));
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When /me returns, populate real user object + permissions.
-  useEffect(() => {
-    if (meRes.currentData?.success && meRes.currentData.data) {
-      const d = meRes.currentData.data;
-      const u = d.user;
-      const perms = d.permissions ?? [];
-      dispatch(
-        setHydratedUser({
-          user: {
-            ...u,
-            fullName: `${u.firstName} ${u.lastName}`.trim(),
-          },
-          permissions: perms,
-        })
-      );
-    } else if (
-      meTrigger &&
-      meRes.isError &&
-      (meRes.error as { status?: unknown }).status === 401
-    ) {
-      // me returned 401 despite refresh ok → clear everything
-      dispatch(clearCredentials());
-    }
-  }, [dispatch, meRes.currentData, meRes.isError, meRes.error, meTrigger]);
-
-  // ─────────────────────────────────────────────────────────────────────
-  // Auth guard redirects (run after hydration, NOT while hydrating)
+  // Route guards — only after hydration finished (hydrating=false).
   useEffect(() => {
     if (hydrating) return;
-    const onDashboardPath = startsWithAny(pathname, DASHBOARD_PATHS_REQUIRING_AUTH);
-    const onPublicAuthPage = pathname === "/login" || pathname === "/forgot-password";
+    const onDashboardPath = startsWithAny(
+      pathname,
+      DASHBOARD_PATHS_REQUIRING_AUTH
+    );
+    const onPublicAuthPage =
+      pathname === "/login" || pathname === "/forgot-password";
 
     if (onDashboardPath && !isAuthenticated) {
       router.replace("/login?next=" + encodeURIComponent(pathname));
@@ -212,19 +112,19 @@ export default function AuthHydrationProvider({ children }: { children: ReactNod
       router.replace("/dashboard");
       return;
     }
-    if (isAuthenticated && forceChangePassword && pathname !== "/change-password") {
+    if (
+      isAuthenticated &&
+      forceChangePassword &&
+      pathname !== "/change-password"
+    ) {
       router.replace("/change-password");
       return;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrating, isAuthenticated, pathname, forceChangePassword]);
 
-  // While hydrating on dashboard-like paths, render a clean skeleton spinner.
-  // Public marketing paths should render immediately — the header doesn't need auth.
-  const isPublic = startsWithAny(pathname, PUBLIC_PATHS);
-  const showSkeleton = hydrating && !isPublic && startsWithAny(pathname, DASHBOARD_PATHS_REQUIRING_AUTH);
-
-  void refreshState; // silence unused
+  const showSkeleton =
+    hydrating && startsWithAny(pathname, DASHBOARD_PATHS_REQUIRING_AUTH);
 
   if (showSkeleton) {
     return (

@@ -90,6 +90,7 @@ export default function LoginForm() {
           setCredentials({
             accessToken: payload.accessToken,
             user: payload.user,
+            permissions: payload.permissions ?? [],
           })
         );
         // Let the user see success for 300ms then redirect
@@ -137,7 +138,7 @@ export default function LoginForm() {
         <div
           id="session-expired"
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-200"
+          className="flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800 dark:border-violet-800/40 dark:bg-violet-950/30 dark:text-violet-200"
         >
           <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
           <div>

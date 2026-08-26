@@ -22,12 +22,15 @@ export type LoginResponseDto = {
   tokenType: "Bearer";
   expiresInSec: number; // Access token TTL in seconds (used by frontend to show warning)
   user: UserProfileDto;
+  permissions: string[];
 };
 
 export type RefreshResponseDto = {
   accessToken: string;
   tokenType: "Bearer";
   expiresInSec: number;
+  user: UserProfileDto;
+  permissions: string[];
 };
 
 export type ForgotPasswordResponseDto = {

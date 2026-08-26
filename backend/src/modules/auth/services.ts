@@ -102,10 +102,16 @@ export const AuthService = {
   ): Promise<{ response: LoginResponseDto; refreshJwt: string }> {
     const email = dto.email.trim().toLowerCase();
 
-    // Load user IF present. Otherwise keep null so we still run dummy compare.
     const user = await prisma.user.findUnique({
       where: { email },
-      include: { role: { select: { name: true, id: true } } },
+      include: {
+        role: {
+          select: {
+            id: true, name: true,
+            permissions: { select: { permission: { select: { code: true } } } },
+          },
+        },
+      },
     });
 
     const passwordValid = await verifyPassword(
@@ -113,8 +119,6 @@ export const AuthService = {
       user?.passwordHash,
     );
 
-    // ⚠️ USER ENUMERATION PROTECTION: same error code + message regardless of
-    // whether email does not exist or password is wrong.
     if (!user || !passwordValid) {
       throw new UnauthorizedError("Invalid email or password.");
     }
@@ -125,7 +129,10 @@ export const AuthService = {
       );
     }
 
-    // Rotation = create a NEW refresh token every login (reuse detection later)
+    // Flat permissions list
+    const permissions =
+      user.role?.permissions?.map((rp) => rp.permission.code).filter(Boolean) ?? [];
+
     const jti = randomUUID();
     const familyId = randomUUID();
 
@@ -143,8 +150,6 @@ export const AuthService = {
     const accessJwt = signAccessToken(accessPayload);
     const refreshJwt = signRefreshToken(refreshPayload);
 
-    // Store refresh hash (NOT the raw JWT) in DB — defense-in-depth.
-    // If RefreshToken table gets dumped, attacker can only verify hashes, not mint JWTs.
     const hashed = hashRefreshToken(refreshJwt);
     const ttlSec = expiresInToSeconds(CONFIG.jwt.refreshExpiresIn);
     const expiresAt = new Date(Date.now() + ttlSec * 1000);
@@ -161,7 +166,6 @@ export const AuthService = {
       },
     });
 
-    // Update lastLoginAt (no await blocking response — fire & forget)
     void prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
@@ -173,7 +177,11 @@ export const AuthService = {
         accessToken: accessJwt,
         tokenType: "Bearer",
         expiresInSec: expiresInToSeconds(CONFIG.jwt.accessExpiresIn),
-        user: userToDto(user),
+        user: userToDto({
+          ...user,
+          role: user.role ? { id: user.role.id, name: user.role.name } : null,
+        }),
+        permissions,
       },
     };
   },
@@ -213,8 +221,9 @@ export const AuthService = {
           include: {
             role: {
               select: {
-                name: true,
                 id: true,
+                name: true,
+                permissions: { select: { permission: { select: { code: true } } } },
               },
             },
           },
@@ -223,15 +232,66 @@ export const AuthService = {
     });
 
     if (!row) {
-      // JWT signature is valid, but we never stored this jti → attacker forged from leaked old secret? revoke cookie anyway.
       throw new UnauthorizedError(
         "Refresh token not found in store. Please log in again.",
       );
     }
 
-    // 1. Reuse detection — ATTACK!
+    // 1. Reuse detection (DEFENSE-IN-DEPTH with 5s tolerance window).
+    //    Legitimate race: StrictMode double effect / TCP retransmit → browser sends
+    //    the same refresh request POST twice. Old logic banned the family outright,
+    //    which caused the persistent login-loop we've been fixing.
+    //    Tolerance: if first-use was < 5 seconds ago, mint a fresh sibling access
+    //    token (refresh cookie already set by winner; we don't need new rotation)
+    //    so loser's response still succeeds (caller can proceed).
     if (row.isUsed) {
-      // Revoke ENTIRE family: real user re-logins = new family, attacker locked out.
+      const firstUsedAgoMs = Date.now() - (row.usedAt?.getTime() ?? 0);
+      if (firstUsedAgoMs <= 5_000) {
+        const userQ = await prisma.user.findFirst({
+          where: { id: row.userId },
+          include: {
+            role: {
+              select: {
+                id: true,
+                name: true,
+                permissions: {
+                  select: { permission: { select: { code: true } } },
+                },
+              },
+            },
+          },
+        });
+        if (userQ) {
+          const role = userQ.role ?? null;
+          const permissions =
+            role?.permissions
+              ?.map((rp) => rp.permission.code)
+              .filter(Boolean) ?? [];
+          // Mint a sibling access token (cheaper than another rotation; browser
+          // already got the new refresh cookie from the winning request anyway)
+          const siblingJti = randomUUID();
+          const accessJwt = signAccessToken({
+            sub: userQ.id,
+            roleId: role?.id ?? "",
+            role: role?.name ?? "VIEWER",
+            jti: siblingJti,
+          });
+          return {
+            newRefreshJwt: "replay_tolerated__use_winner_cookie",
+            response: {
+              accessToken: accessJwt,
+              tokenType: "Bearer",
+              expiresInSec: expiresInToSeconds(CONFIG.jwt.accessExpiresIn),
+              user: userToDto({
+                ...userQ,
+                role: role ? { id: role.id, name: role.name } : null,
+              }),
+              permissions,
+            },
+          };
+        }
+      }
+      // > 5s reuse OR sibling lookup failed = TRUE attacker replay. BAN FAMILY.
       await prisma.refreshToken.updateMany({
         where: { familyId: row.familyId },
         data: { isFamilyRevoked: true, revokedAt: new Date() },
@@ -301,12 +361,20 @@ export const AuthService = {
       },
     });
 
+    const permissions =
+      row.user.role?.permissions?.map((rp) => rp.permission.code).filter(Boolean) ?? [];
+
     return {
       newRefreshJwt: newRefresh,
       response: {
         accessToken: newAccess,
         tokenType: "Bearer",
         expiresInSec: expiresInToSeconds(CONFIG.jwt.accessExpiresIn),
+        user: userToDto({
+          ...row.user,
+          role: row.user.role ? { id: row.user.role.id, name: row.user.role.name } : null,
+        }),
+        permissions,
       },
     };
   },
