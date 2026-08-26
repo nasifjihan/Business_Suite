@@ -11,14 +11,6 @@ type PaginationMeta = {
 
 type Envelope<T> = { success: true; data: T; message?: string };
 
-(apiSlice as unknown as { tagTypes: string[] }).tagTypes.push(
-  "Categories",
-  "Products",
-  "Warehouses",
-  "Stock",
-  "Movements",
-);
-
 export type CategoryItem = {
   id: string;
   categoryCode: string;
@@ -136,20 +128,24 @@ export type ListLowStockProductsResponse = {
 
 export type CreateProductRequest = {
   name: string;
-  sku: string;
+  sku?: string;
   productCode?: string;
   description?: string;
   categoryId?: string;
   unit?: string;
   costPrice?: number;
   sellingPrice?: number;
+  unitPrice?: number;
   currency?: string;
   minStockLevel?: number;
   maxStockLevel?: number;
   reorderPoint?: number;
+  minimumLevel?: number;
   status?: ProductStatus;
   barcode?: string;
   weight?: number;
+  weightKg?: number;
+  unitOfMeasure?: string;
   dimensions?: string;
   imageUrl?: string;
 };

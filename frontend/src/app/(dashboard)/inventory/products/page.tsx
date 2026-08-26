@@ -218,15 +218,15 @@ export default function ProductsPage() {
   const onSubmitCreate = async (v: ProductFormValues) => {
     const body: CreateProductRequest = {
       name: v.name,
-      sku: v.sku || undefined,
-      barcode: v.barcode || undefined,
-      categoryId: v.categoryId || undefined,
+      sku: (v.sku ?? undefined) as string | undefined,
+      barcode: (v.barcode ?? undefined) as string | undefined,
+      categoryId: (v.categoryId ?? undefined) as string | undefined,
       status: v.status,
-      unit: v.unit || undefined,
+      unitOfMeasure: v.unit || undefined,
       costPrice: parseNum(v.costPrice),
-      sellingPrice: parseNum(v.sellingPrice),
-      weight: parseNum(v.weight),
-      description: v.description || undefined,
+      unitPrice: parseNum(v.sellingPrice),
+      weightKg: parseNum(v.weight),
+      description: (v.description ?? undefined) as string | undefined,
     };
     const out = await createTrigger(body);
     if ("data" in out && out.data?.success) {
@@ -240,15 +240,15 @@ export default function ProductsPage() {
       id: modal.product.id,
       body: {
         name: v.name,
-        sku: v.sku || undefined,
-        barcode: v.barcode || undefined,
-        categoryId: v.categoryId || undefined,
+        sku: (v.sku ?? undefined) as string | undefined,
+        barcode: (v.barcode ?? undefined) as string | undefined,
+        categoryId: (v.categoryId ?? undefined) as string | undefined,
         status: v.status,
-        unit: v.unit || undefined,
+        unitOfMeasure: v.unit || undefined,
         costPrice: parseNum(v.costPrice),
-        sellingPrice: parseNum(v.sellingPrice),
-        weight: parseNum(v.weight),
-        description: v.description || undefined,
+        unitPrice: parseNum(v.sellingPrice),
+        weightKg: parseNum(v.weight),
+        description: (v.description ?? undefined) as string | undefined,
       },
     });
     if ("data" in out && out.data?.success) {

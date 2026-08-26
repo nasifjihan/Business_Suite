@@ -8,10 +8,8 @@
  * Run AFTER schema changes & prisma generate.
  *   npx ts-node prisma/seed_phase6_inventory.ts
  */
-import "dotenv/config";
-import { PrismaClient, RoleType } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../src/lib/prisma";
+import { RoleType } from "@prisma/client";
 
 type PermissionSeed = {
   code: string;

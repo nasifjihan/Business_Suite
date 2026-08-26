@@ -255,11 +255,11 @@ model User {
   createdCategories Category[]      @relation("CategoryCreatedBy")
   createdProducts   Product[]       @relation("ProductCreatedBy")
   createdWarehouses Warehouse[]     @relation("WarehouseCreatedBy")
-  warehousesManaged Warehouse[]
+  warehousesManaged Warehouse[]     @relation("WarehouseManager")
   stockMovements    StockMovement[] @relation("StockMovementCreator")
   movementUser      StockMovement[] @relation("MovementUser")
-  createdOrders     Order[]
-  paymentsReceived  Payment[]
+  createdOrders     Order[]         @relation("OrderCreatedBy")
+  paymentsReceived  Payment[]       @relation("PaymentReceivedBy")
   departments       Department[]
   leaveApprovals    LeaveRequest[]  @relation("LeaveApprover")
 
@@ -597,18 +597,21 @@ model Warehouse {
   code       String?  @unique
   location   String?
   isActive   Boolean  @default(true)
+  managerId  String?
   createdById String?
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
   stockLevels   Stock[]
   movements     StockMovement[]
+  manager       User?   @relation("WarehouseManager", fields: [managerId], references: [id], onDelete: SetNull)
   createdBy     User?   @relation("WarehouseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   orders        Order[]
 
   @@index([name])
   @@index([code])
   @@index([isActive])
+  @@index([managerId])
   @@index([createdById])
 }
 
@@ -636,16 +639,19 @@ model StockMovement {
   reference    String?
   note         String?
   userId       String?
+  createdBy    String?
   createdAt    DateTime     @default(now()) @db.Timestamptz(6)
 
   product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   user      User?    @relation("MovementUser", fields: [userId], references: [id], onDelete: SetNull)
+  creator   User?    @relation("StockMovementCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@index([movementType])
   @@index([productId])
   @@index([warehouseId])
   @@index([userId])
+  @@index([createdBy])
   @@index([createdAt])
 }
 
@@ -673,7 +679,7 @@ model Order {
 
   customer  Customer?   @relation(fields: [customerId], references: [id], onDelete: Restrict)
   warehouse Warehouse?  @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
-  creator   User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  creator   User?       @relation("OrderCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   items     OrderItem[]
   invoices  Invoice[]
 
@@ -752,7 +758,7 @@ model Payment {
   updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
 
   invoice  Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
-  receiver User?   @relation(fields: [receivedBy], references: [id], onDelete: SetNull)
+  receiver User?   @relation("PaymentReceivedBy", fields: [receivedBy], references: [id], onDelete: SetNull)
 
   @@index([paymentNumber])
   @@index([invoiceId])

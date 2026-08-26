@@ -34,10 +34,15 @@ export const apiSlice = createApi({
     "Opportunities",
     "Activities",
     "Contracts",
-    // Phase 5+: "Products", "Categories", "Warehouses", "Stock", "StockMovements"
-    // Phase 6+: "Orders", "Invoices", "Payments"
-    // Phase 7+: "Employees", "Attendance", "LeaveRequests"
-    // Phase 8+: "DashboardKPIs"
+    // Phase 6 Inventory
+    "Categories",
+    "Products",
+    "Warehouses",
+    "Stock",
+    "Movements",
+    // Phase 7+: "Orders", "Invoices", "Payments"
+    // Phase 8+: "Employees", "Attendance", "LeaveRequests"
+    // Phase 9+: "DashboardKPIs"
   ],
   endpoints: () => ({}),
 });
