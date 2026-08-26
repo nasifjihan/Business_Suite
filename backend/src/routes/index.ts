@@ -18,25 +18,24 @@ import { rolesRouter } from "../modules/roles/routes";
 import { permissionsRouter } from "../modules/permissions/routes";
 import { auditLogsRouter } from "../modules/audit-logs/routes";
 import { profileRouter } from "../modules/profile/routes";
+import { crmRouter } from "../modules/crm/routes";
 
 const apiV1Router = Router();
 
 apiV1Router.use("/health", healthRouter);
 apiV1Router.use("/auth", authRouter);
 
-// Phase 3: Administration / RBAC routes
 apiV1Router.use("/users", usersRouter);
 apiV1Router.use("/roles", rolesRouter);
 apiV1Router.use("/permissions", permissionsRouter);
 apiV1Router.use("/audit-logs", auditLogsRouter);
 apiV1Router.use("/profile", profileRouter);
 
-// Phase 4: CRM
-// apiV1Router.use("/customers", customersRouter)
-// apiV1Router.use("/leads", leadsRouter)
-// Phase 5+: /products, /warehouses, /stock, ...
-// Phase 6+: /orders, /invoices, /payments
-// Phase 7+: /employees, /attendance, /leaves
-// Phase 8+: /dashboard/*
+apiV1Router.use("/crm", crmRouter);
+
+// Phase 6+: /products, /warehouses, /stock, ...
+// Phase 7+: /orders, /invoices, /payments
+// Phase 8+: /employees, /attendance, /leaves
+// Phase 9+: /dashboard/*
 
 export { apiV1Router };

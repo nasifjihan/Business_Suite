@@ -33,6 +33,25 @@ enum RoleType {
 enum CustomerStatus {
   ACTIVE
   INACTIVE
+  CHURNED
+}
+
+enum OpportunityStage {
+  PROSPECTING
+  QUALIFICATION
+  NEEDS_ANALYSIS
+  PROPOSAL
+  NEGOTIATION
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum ContractStatus {
+  DRAFT
+  SIGNED
+  ACTIVE
+  EXPIRED
+  TERMINATED
 }
 
 enum LeadStatus {
@@ -59,6 +78,7 @@ enum ActivityType {
   MEETING
   NOTE
   TASK
+  PROPOSAL_SENT
 }
 
 enum ProductStatus {
@@ -217,6 +237,11 @@ model User {
   createdLeads      Lead[]          @relation("UserCreatedLeads")
   assignedLeads     Lead[]          @relation("UserAssignedLeads")
   leadActivities    LeadActivity[]
+  assignedOpportunities Opportunity[] @relation("UserAssignedOpportunities")
+  createdOpportunities  Opportunity[] @relation("UserCreatedOpportunities")
+  signedContracts   Contract[]      @relation("ContractSignedBy")
+  createdContracts  Contract[]      @relation("ContractCreatedBy")
+  activities        Activity[]
   createdProducts   Product[]
   warehousesManaged Warehouse[]
   stockMovements    StockMovement[] @relation("StockMovementCreator")
@@ -315,20 +340,25 @@ model Customer {
   totalSpent   Decimal        @default(0) @db.Decimal(14, 2)
   orderCount   Int            @default(0)
   notes        String?
+  source       LeadSource     @default(OTHER)
   status       CustomerStatus @default(ACTIVE)
   createdBy    String?
   createdAt    DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime       @updatedAt @db.Timestamptz(6)
 
-  creator  User?     @relation("UserCreatedCustomers", fields: [createdBy], references: [id], onDelete: SetNull)
-  contacts Contact[]
-  orders   Order[]
-  invoices Invoice[]
+  creator       User?          @relation("UserCreatedCustomers", fields: [createdBy], references: [id], onDelete: SetNull)
+  contacts      Contact[]
+  opportunities Opportunity[]
+  contracts     Contract[]
+  orders        Order[]
+  invoices      Invoice[]
+  activities    Activity[]
 
   @@index([customerCode])
   @@index([name])
   @@index([email])
   @@index([status])
+  @@index([source])
   @@index([createdBy])
   @@index([createdAt])
 }
@@ -364,6 +394,7 @@ model Lead {
   source       LeadSource @default(OTHER)
   status       LeadStatus @default(NEW)
   value        Decimal    @default(0) @db.Decimal(14, 2)
+  currency     String     @default("USD")
   probability  Int        @default(0) // 0-100 %
   assignedToId String?
   createdBy    String?
@@ -375,6 +406,8 @@ model Lead {
   assignedTo User?          @relation("UserAssignedLeads", fields: [assignedToId], references: [id], onDelete: SetNull)
   creator    User?          @relation("UserCreatedLeads", fields: [createdBy], references: [id], onDelete: SetNull)
   activities LeadActivity[]
+  unifiedActivities Activity[]
+  convertedOpportunities Opportunity[]
 
   @@index([leadCode])
   @@index([name])
@@ -402,6 +435,92 @@ model LeadActivity {
   @@index([userId])
   @@index([activityAt])
   @@index([type])
+}
+
+model Opportunity {
+  id                String           @id @default(uuid())
+  opportunityCode   String           @unique
+  name              String
+  customerId        String?
+  leadId            String?
+  stage             OpportunityStage @default(PROSPECTING)
+  amount            Decimal          @default(0) @db.Decimal(14, 2)
+  currency          String           @default("USD")
+  probabilityPercent Int?            @db.SmallInt
+  expectedCloseDate DateTime?        @db.Date
+  assignedToId      String?
+  notes             String?
+  createdById       String?
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+
+  customer       Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  lead           Lead?      @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  assignedTo     User?      @relation("UserAssignedOpportunities", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy      User?      @relation("UserCreatedOpportunities", fields: [createdById], references: [id], onDelete: SetNull)
+  activities     Activity[]
+
+  @@index([opportunityCode])
+  @@index([name])
+  @@index([stage])
+  @@index([customerId])
+  @@index([leadId])
+  @@index([assignedToId])
+  @@index([expectedCloseDate])
+  @@index([createdAt])
+}
+
+model Activity {
+  id          String       @id @default(uuid())
+  type        ActivityType
+  subject     String
+  description String?
+  activityAt  DateTime     @default(now()) @db.Timestamptz(6)
+  outcome     String?
+  userId      String
+  leadId      String?
+  customerId  String?
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  opportunityId String?
+
+  @@index([userId])
+  @@index([leadId])
+  @@index([customerId])
+  @@index([opportunityId])
+  @@index([type])
+  @@index([activityAt])
+}
+
+model Contract {
+  id           String         @id @default(uuid())
+  contractCode String         @unique
+  customerId   String
+  title        String
+  status       ContractStatus @default(DRAFT)
+  startDate    DateTime       @db.Date
+  endDate      DateTime       @db.Date
+  value        Decimal        @default(0) @db.Decimal(14, 2)
+  signedAt     DateTime?      @db.Timestamptz(6)
+  signedById   String?
+  notes        String?
+  createdById  String?
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(6)
+
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  signedBy   User?    @relation("ContractSignedBy", fields: [signedById], references: [id], onDelete: SetNull)
+  createdBy  User?    @relation("ContractCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([contractCode])
+  @@index([customerId])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@index([createdAt])
 }
 
 // ═══════════════════════════════════════════════════════════════════════

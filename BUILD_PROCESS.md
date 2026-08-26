@@ -865,35 +865,160 @@ git commit -m "feat(phase-4): reusable UI library (19 components) + TanStack v9 
 
 ---
 
-## 8. PHASE 5 — CRM Module (Customers, Leads, Activities)
+## 8. PHASE 5 — CRM Module (Customers, Leads, Opportunities, Activities, Contracts)
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ Editor-side complete. Backend/Frontend TypeScript compile pending user-run. TSC by sub-agent module pattern: each sub-agent wrote customers/contacts, leads/activities, opportunities/contracts.
 
-### Database Tables
-- `customers` (id, customerCode, name, companyName, email, phone, address, city, country, status, notes, createdBy → FK users.id)
-- `contacts` (id, customerId, name, email, phone, designation, isPrimary) — one customer has many contacts
-- `leads` (id, leadCode, name, companyName, email, phone, source, status, value, assignedToId → users.id, notes)
-- `lead_activities` (id, leadId, userId, type, subject, description, activityAt)
+### 8.1 Database Schema Changes (6 tables + 5 enums + relations)
 
-Status enums: LeadStatus = NEW | CONTACTED | QUALIFIED | PROPOSAL | WON | LOST
-Source enums: WEBSITE | REFERRAL | SOCIAL | PHONE | EMAIL | OTHER
+**Enums added/extended:**
+- `CustomerStatus` (extend ACTIVE | INACTIVE → ACTIVE | INACTIVE | **CHURNED**) (rose tone)
+- **`OpportunityStage`** = PROSPECTING|QUALIFICATION|NEEDS_ANALYSIS|PROPOSAL|NEGOTIATION|CLOSED_WON|CLOSED_LOST (7 stages — 7 StatusBadge tones: slate/sky/violet/teal/violet/emerald/rose NO AMBER anywhere)
+- **`ContractStatus`** = DRAFT|SIGNED|ACTIVE|EXPIRED|TERMINATED (slate/sky/emerald/slate/rose)
+- `ActivityType` extended (CALL, EMAIL, MEETING, NOTE, TASK → + **PROPOSAL_SENT**) (emerald tone)
 
-### Backend CRM Module
-- Each sub-module (customers, contacts, leads, activities) has: `validators.ts` (Zod), `services.ts` (business logic), `controllers.ts` (thin HTTP layer), `routes.ts`
-- `GET /customers` — server-side pagination, search by name/company/email/code, filter by status, sort by any column
-- `POST /customers` — Validates unique email (if provided), generates customerCode (CUST-0001 auto-increment pattern stored in a counter or derived from existing max)
-- `GET /customers/:id` — Includes contacts, last 10 orders, summary stats (total spent, order count)
-- Leads: `PATCH /leads/:id` can change status, `POST /leads/:id/activities` adds timeline entry
-- Permissions applied: `customers.read`, `customers.create`, `customers.update`, `customers.delete` etc.
+**Tables added (3 NEW models):**
+| Model | Primary codes pattern | Key fields |
+|-------|----------------------|------------|
+| Opportunity | OPP-0001 counter | customerId? FK, leadId? FK, stage (default PROSPECTING), amount(14,2) @currency USD, probabilityPercent Int 0-100, expectedCloseDate Date, assignedToId FK, createdById, unifiedActivities[] |
+| **Unified Activity** | Append-only no PATCH/DELETE routes | type (ActivityType), subject req, description, activityAt, outcome, userId, leadId? FK, customerId? FK, opportunityId? FK — **XOR exactly one non-null** (Zod refine at validation layer + application layer pre-insert FK existence check each) |
+| Contract | CON-0001 counter | customerId req, title req, status, startDate endDate refine end>=start, value(14,2), signedAt/signedById FK, notes |
 
-### Frontend CRM
-- Pages under `app/(dashboard)/crm/`: customers/page.tsx, customers/[id]/page.tsx (detail), leads/page.tsx, leads/[id]/page.tsx
-- Customer list: GlobalTable with search + status filter + create button
-- Customer detail: 3 tabs — Profile info, Contacts table (add/edit/remove), Orders table, Activity timeline
-- Lead list: Kanban-ish pipeline view (6 columns: NEW → CONTACTED → QUALIFIED → PROPOSAL → WON → LOST) + table view toggle
-- Lead detail: Status dropdown (quick change), Assigned-to user select, Activity timeline with Add Activity form
+**Existing models touched:**
+- Customer: + `source LeadSource @default(OTHER)` (already in schema), `status CHURNED`, + relations to opportunities[], contracts[], activities[]
+- Lead: + `currency String @default(USD)`, + relations `unifiedActivities Activity[]`, `convertedOpportunities Opportunity[]`
+- User: + 6 new FK-relations (assignedOpportunities, createdOpportunities, signedContracts, createdContracts, created activities[], assignedTo opps) — all FK SetNull/Cascade correctly
+- All indexes added: status filters, source, assignedToId, customerId/leadId/oppId on activity, expectedCloseDate, stage, opportunityCode/contractCode uniques
 
-**Concepts learned**: Domain-driven module structure, one-to-many relations, Prisma `include` for joins, status pipeline workflow, auto-generated business codes (CUST-0001 pattern), detail page with tabbed sections, kanban vs table view trade-offs.
+### 8.2 Permission Seed — `seed_phase5_crm.ts` (15 new codes)
+**Idempotent pattern** matches Phase 3: upsert each Permission, then for each role (SUPER_ADMIN..VIEWER) find existing RolePermissions → add-only (never delete; additive for idempotency across re-runs). 15 new granular codes added:
+
+| Sub-module | Codes (4 or 5 each) |
+|------------|---------------------|
+| Contacts 4 | crm.contacts.read/create/update/delete |
+| Opportunities 5 | crm.opportunities.read/create/update/delete/stage (PATCH quick change) |
+| Lead convert 1 | crm.leads.convert (QUALIFIED → WON $transaction) |
+| Activities 2 | crm.activities.read/create — **append-only no update/delete codes** |
+| Contracts 4 | crm.contracts.read/create/update/delete |
+
+**Role tier grants summary:**
+- SUPER_ADMIN + ADMIN: all 15
+- MANAGER: all (contacts, opps all incl delete, convert, activities, contracts R/C/U/D)
+- SALES: contacts R/C/U/D, opps NO DELETE, activities, convert, contracts R/C
+- CASHIER: read-only for contacts/activities/contracts only
+- HR: nothing (CRM separate)
+- VIEWER: *.read only for all 6 CRM tables (no writes)
+
+### 8.3 Backend Modules (Folder-per-resource 4 files each)
+**All files under `backend/src/modules/crm/`:**
+- customers/{validators,services,controllers,routes}.ts → CUST-% code generate inside create(dto,req) $transaction writeAudit CREATE afterData, list supports search name/company/email OR, status filter, source filter, pagination, getById(id,includeContacts=true,includeOpps=true)
+- contacts/{validators,services,controllers,routes}.ts → createForCustomer(customerId,dto,req): **isPrimary enforcement**: if dto.isPrimary===true then BEFORE inserting UPDATE set this customer's ALL existing contacts set isPrimary false, then create new primary. Append-only writeAudit each write. Dual mount: /contacts/:id standalone CRUD + /customers/:customerId/contacts collection routes (aggregate router mounts both).
+- leads/{validators,services,controllers,routes}.ts → LEAD-% counter, stage enum default NEW, convertLead(id,dto,req) $transaction atomic: (1) validate status≠WON/LOST (BadRequest), (2) create Customer (generate CUST- code, customerName=dto, copy email/phone/source from lead), (3) if createOpportunity → create Opportunity QUALIFICATION w/ amount, (4) UPDATE lead status WON wonLostAt=now(), (5) writeAudit ×3 (Customer CREATE, Opportunity CREATE, Lead UPDATE). Returns triple {customer, opp?, lead}.
+- opportunities/{validators,services,controllers,routes}.ts → OPP-% code, 7 stage tones, patchStage(id,stage,note?,req) stage-only update w/ writeAudit UPDATE metadata:{note}.
+- activities/{validators,services,controllers,routes}.ts → CREATE: 1st verify linked entity exists (lead/customer/opp each FK not 404), then insert activity. Zod XOR refine at validation layer ensures exactly 1 non-null among leadId/customerId/oppId → throws 422 with field-level path refine message. Routes exposes only GET list (paginated, type/userId/dateRange/entityId filters/search) + POST create. **PATCH/DELETE NOT DEFINED = append-only immutable**.
+- contracts/{validators,services,controllers,routes}.ts → CON-% counter generate, create date validate start<=end refine, signedAt/signedById optional, delete DRAFT-only recommended (service doesn't enforce; UI hides delete ACTIVE).
+
+**Mount points (routes/index.ts v2):**
+```ts
+// Phase 5 CRM
+apiV1Router.use("/crm", crmRouter);
+// Inside crm routes aggregate:
+crmRouter.use("/customers", customersRouter);
+crmRouter.use("/customers/:customerId/contacts", contactsRouter); // dual-mount collection
+crmRouter.use("/contacts", contactsRouter);                   // dual-mount standalone
+crmRouter.use("/leads", leadsRouter);
+crmRouter.use("/opportunities", opportunitiesRouter);
+crmRouter.use("/activities", activitiesRouter);
+crmRouter.use("/contracts", contractsRouter);
+```
+
+### 8.4 Frontend Pages (7 pages + Sidebar CRM drawer)
+
+**Sidebar drawer (dashboard layout.tsx):**
+- Added CRM_SUBNAV 5 links: Overview (home), Customers (List), Leads (List), Deals (Opportunities List), Contracts (List) → same pattern as Administration drawer (collapse/expand state, PermissionGate requires ANY of `crm.customers.read / crm.leads.read` etc). Added `hasAnyCRM` computed boolean, added icons: Target, HandCoins, FileText, UserRoundPlus imported from lucide-react; mounted before Admin drawer (CRM top).
+
+**crmEndpoints.ts (RTK Query ~25 endpoints):**
+All 6 CRM resources + List*Args + Create/Update types exported. ApiSlice tagTypes.push mutated after createApi call to register Customers, Contacts, Leads, Opportunities, Activities, Contracts cache tags for provides/invalidatesTags (Pitfall Category A avoided: RTK tag types silent unknown → now registered). Provides/invalidates per module.
+
+**Pages (all "use client" NextJS app router):**
+1. **/crm/page.tsx** (CRM Home Overview): 2x2 stat cards (Total Customers, Open Leads (≠WON/≠LOST), Total Pipeline $ (sum amount non closed), Active Contracts status in {SIGNED, ACTIVE}). Below cards: Recent Leads GlobalTable (createdAt desc take 10), Recent Activities GlobalTable.
+2. **/crm/customers/page.tsx** (List): TableToolbar SearchInput 300ms + Status 3-tone filter + LeadSource 6-tone filter. 7 columns GlobalTable via `createColumns<CustomerItem>()`. Status tones: ACTIVE=emerald, INACTIVE=slate, CHURNED=rose. Source tones: WEBSITE=sky, REFERRAL=violet, SOCIAL=teal, PHONE=slate, EMAIL=sky, OTHER=slate. totalSpent MoneyDisplay USD. createdAt DateDisplay date= prop (NOT value!). Actions View→/crm/customers/[id], Edit md GlobalModal, Trash (PermissionGate crm.customers.delete ConfirmDialog destructive). Create Customer GlobalModal lg w/ 2-col RHF form register spread pattern — NO explicit name= props. 2× GlobalDatePicker → date prop.
+3. **/crm/customers/[id]/page.tsx** (Detail tabs): useParams → id. Hero card identity (avatar initials, code, status, name). Radix Tabs 3: Profile (info display + Edit info modal + Contacts sub-table with add/edit/delete. IsPrimary Radix Switch toggles service auto-resets others). Opportunities (GlobalTable stage 7 strict color mapping). Activity (timeline cards + Log Activity GlobalModal type/subject/description/activityAt date=/userId auto). Breadcrumb [CRM→Customers link→customer.name]. Back button.
+4. **/crm/leads/page.tsx** (List — 2-View Toggle default Table): TABLE view (URL sync search/status/source/assigned pagination + 7 cols createColumns status tones NEW slate CONTACTED sky QUALIFIED violet PROPOSAL teal WON emerald LOST rose). KANBAN view: 6 columns NEW→CONTACTED→QUALIFIED→PROPOSAL→WON→LOST. Per-card: view/edit pencil, Convert button if status∈{QUALIFIED,PROPOSAL,WON, NEW?}→ConvertLead GlobalModal, "Move to stage" GlobalSelect onChange triggers patchLeadStage mutation (click-move, zero drag/drop no dnd-kit installed per Pitfall P1 mitigation). ConvertLead form= attribute submit, redirects to /crm/customers/[id] success.
+5. **/crm/leads/[id]/page.tsx** (Detail tabs: Info, Activity): Top 3 summary cards: big StatusBadge + code, Assigned To avatar, value$ + Probability progress bar. Info tab: 2-col grid display + edit modal. Activity tab: typed status tones (CALL=sky,EMAIL=violet,MEETING=teal,NOTE=slate,TASK=violet,PROPOSAL_SENT=emerald) timeline card per activity + Log Activity GlobalModal (userId auto).
+6. **/crm/opportunities/page.tsx** (Deals List): 4-summary cards. 7 cols createColumns: code, name+customer link, 7-stage strict StatusBadge, MoneyDisplay, probability % mini-progress bar, expectedCloseDate date= prop, assigned, actions view/edit/trash. 7-stage strictly PROSPECTING slate→QUALIFICATION sky→NEEDS_ANALYSIS violet→PROPOSAL teal→NEGOTIATION violet→CLOSED_WON emerald→CLOSED_LOST rose (NO AMBER anywhere). Quick change "Change Stage" header GlobalSelect for detail.
+7. **/crm/opportunities/[id]/page.tsx** (Detail tabs): PageHeader with direct Change Stage dropdown GlobalSelect. Stage 7-step stepper with colored dot at current + gray previous/future + name labels. Stats cards: Amount, Expected close date + win prob%. Details + Activity tabs same pattern as leads/customers.
+8. **/crm/contracts/page.tsx** (List only, MVP no detail MVP this phase fast gate): 5 status tones DRAFT slate, SIGNED sky, ACTIVE emerald, EXPIRED slate, TERMINATED rose. 7 cols code/title+customer link/status/dates(value signed at). Create/edit GlobalModal: customer GlobalSelect req, start/end Date date pickers with cross validate end >= start (z.refine form schema). signedAt optional date, signedById optional, value Decimal, notes.
+
+### 8.5 Key Decisions (Pitfall table mitigations)
+| # | Decision | Pitfall mitigated |
+|---|----------|------------------|
+| 1 | Kanban view = click-move w/ GlobalSelect, NO drag library install | P1: dnd-kit 60KB new deps avoided; zero new npm needed for Phase 5. Pitfall P1 avoided |
+| 2 | Activity unified single table with XOR Zod refine + per FK existence check before insert | P3: activity FK 404 avoided — returns 404 per entity if missing. No orphan activities posted |
+| 3 | Business code counters (CUST-%) inside create() $transaction with unique DB constraint last guard | P2: concurrent create duplicate — unique index 500 maps via global error handler to 429 Conflict retry |
+| 4 | Status colors strictly 6 families via StatusBadge enum — 6 tones/7 stages map PROSPECTING→slate + NEGOTIATION→violet reuse | Pitfall: never amber/yellow anywhere |
+| 5 | Dual mount contactsRouter (both collection + standalone) | Pitfall contact update without customer context 404 avoided; contacts/:id works |
+| 6 | RTK tag types registered via (apiSlice as unknown).tagTypes.push after createApi call — avoids re-writing existing tagTypes | Pitfall: RTK providesTags "unknown" → silent invalidation failure. Now properly invalidates. |
+
+### 8.6 Editor-side gates
+- ✅ All 6 sub-modules backend 4-files × 6 = 24 files created with services transaction audit write
+- ✅ Aggregate router `/crm` mounted with dual-mount contacts routes
+- ✅ Seed file idempotent additive pattern (never destructive)
+- ✅ Frontend 7 pages + layout CRM drawer implemented
+- ✅ User profile rule: **ZERO yellow/amber family references** — all tones strictly 6-family. No background amber no text amber no border amber.
+- ⏳ Pending User-run commands: `npx prisma generate`, migrate dev, seed phase5, backend strict tsc exit 0, frontend strict tsc exit 0, servers start + browser smoke tests 8 gates.
+
+### 8.7 Your terminal commands (in order, stop on first error; report failures to editor):
+```powershell
+# A. Backend schema → Prisma Client (must run before tsc!)
+cd "g:\MBW Projects\Other\BS\backend"
+npx prisma generate
+
+# B. Apply DB migration (PostgreSQL must be running!)
+npx prisma migrate dev --name phase5_crm   # creates SQL migration files
+
+# C. Seed Phase 5 RBAC (15 new codes + grants)
+npx ts-node prisma/seed_phase5_crm.ts
+
+# D. Backend strict TypeScript
+npx tsc --noEmit -p tsconfig.json
+# EXPECTED: exit code 0. If errors: copy error list, send editor, we bucket-fix.
+
+# E. Frontend strict TypeScript
+cd "g:\MBW Projects\Other\BS\frontend"
+npx tsc --noEmit
+# EXPECTED: exit code 0. Same pattern — bucket-fix if errors.
+
+# F. (Optional Fast Gate) Frontend build
+# npm run build
+
+# G. Start servers (if not already running)
+# Terminal 1 (backend):  cd backend && npm run dev   (port 5000)
+# Terminal 2 (frontend): cd frontend && npm run dev  (port 3000)
+
+# H. Browser smoke tests (login admin@example.com / Admin@123):
+# Gate 1: CRM drawer visible in sidebar → click CRM → Overview renders 4 cards + 2 tables.
+# Gate 2: Customers page → Create Customer (fill name). Save. New row appears with CUST-0001 code. StatusBadge emerald. NO YELLOW.
+# Gate 3: Customers detail page → tabs Profile (info + add contact Set isPrimary) → Opportunities → Activity (log an activity CALL type, submit). 3 tabs all load.
+# Gate 4: Leads page → Toggle Kanban view → 6 columns NEW/CONTACTED/QUALIFIED/PROPOSAL/WON/LOST visible. Create lead NEW.
+# Gate 5: Leads Kanban → click "Move to stage" on the new lead card → select QUALIFIED. Lead moves column, lead saved (single mutation).
+# Gate 6: Lead QUALIFIED → click "Convert" button. Fill customer name/opportunity. Submit. Redirect to /crm/customers/[id]! Opportunity created.
+# Gate 7: Opportunities page → 7 stages. Click CLOSED_WON stage filter = emerald tones only. No amber. 7 columns all render. Create → save → OPP-0001.
+# Gate 8: Status Badge NO-YELLOW audit — navigate all CRM pages. 2-minute visual:
+#   Customer statuses: emerald/slate/rose only.
+#   Lead statuses: 6 colors. NO amber/mustard.
+#   Opportunity 7 stages all slate/sky/violet/teal/emerald/rose. No amber.
+#   Contracts 5 status slate/sky/emerald/slate/rose.
+# Gate 9: URL pagination/sort works on all 4 list pages. Back button returns.
+# Gate 10: SALES login (create one SALES if none). Sales cannot delete Customers (trash hidden via PermissionGate).
+
+# I. After 10 gates PASS: git commit
+cd "g:\MBW Projects\Other\BS"
+git add -A
+git commit -m "feat(phase-5): CRM module (6 Prisma models + 6 RBAC-gated backend sub-modules + 7 frontend pages w/ reusable UI library + Lead convert $transaction + append-only Activity + Kanban click-move)"
+```
+
+**Concepts learned in Phase 5**: (1) Domain-driven backend folder-per-resource (validators/services/controllers/routes) vs single large file; (2) Business code counter pattern CUST-% in service layer; (3) Prisma $transaction used in TWO critical cases: create+audit pair, and multi-entity Lead convert atomic rollback; (4) Zod XOR refine + service-level FK existence checks for generic polymorphic-entity linked tables (Activity); (5) Dual mount pattern for child collections/contacts both standalone + parent context routes; (6) Kanban MVP click-move vs drag-and-drop tradeoff; (7) RTK cache tag mutation pattern after createApi for module-scoped tags.
 
 ---
 

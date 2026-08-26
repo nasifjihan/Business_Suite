@@ -183,6 +183,40 @@ A: Real example from this project: User profile forbids high-saturation yellows/
 
 ## Phase 5 — CRM
 
+### Mistakes during implementation:
+1. **Initially planned to add dnd-kit for Kanban drag/drop (estimated 60KB bundle + 1 new npm install)** before re-reading Pitfall P1 from the header. **Fix**: Simple click-move "Move to stage" GlobalSelect directly in each lead card. Zero new deps, 0 install, 1 mutation per stage change. Drag is purely visual nice-to-have, not MVP-required for business.
+2. **Tempted to create separate tables: `LeadActivity`, `CustomerActivity`, `OpportunityActivity`** to avoid XOR validation complexity. This would have tripled code later — 3 timeline components, 3 endpoints, duplicate schemas. **Fix**: Single unified Activity table with Zod XOR refine + service-level FK existence checks for the chosen entity. Refine at validation layer returns friendly 422 before any DB write hits.
+3. **Put `contacts/:id` route under customers only — then realized we can't PATCH/DELETE a contact standalone without customer param.** Created dual-mount pattern in the aggregate router: same contactsRouter mounted BOTH at `/crm/customers/:customerId/contacts` AND at `/crm/contacts`. So POST (collection) uses first path, PATCH/DELETE (standalone contact) uses second path with just `/:id`.
+4. **Wrote CRM_SUBNAV initially with only `any:["customers.read","leads.read"]` — but VIEWER has old `crm` module perm only.** Phase 3 RBAC added customers.read as `crm` module — so `customers.read` code alone won't fire PermissionGate for viewer users. **Fix**: Added `crm.customers.read` to ANY-of list in sidebar requires, plus added cross-checks in seed to ensure role gets the granular code too if they had legacy module-level ones.
+5. **(Category C tsc prediction) crmEndpoints.ts wrote RTK tag `providesTags: [{ type: "Customers", id }]` — but tagTypes was never added to `createApi()` tagTypes array!** This is a silent RTK footgun: tag names are typed as strings, and invalidatesTags unknown just silently noops (cache never clears!). **Fix**: After createApi, mutate with `(apiSlice as unknown as {tagTypes: string[]}).tagTypes.push("Customers","Contacts","Leads","Opportunities","Activities","Contracts")` to actually register tags at runtime.
+
+### Key decisions:
+1. **Business code counters inside create() $transaction** (`CUST-0001`, `OPP-0001`, `CON-0001`, `LEAD-0001`) vs PostgreSQL sequence. Chose DB counter: (a) codes are human readable for phone calls — CUST-42 vs UUID. (b) Service wraps counter select + insert + writeAudit in one `$transaction`, and Prisma unique index is a LAST-LINE DEFENSE (returns P2002 if race → maps to 409 Conflict in global error handler → retry-able).
+2. **Activity append-only immutable design: no PATCH no DELETE routes at all.** Future compliance: sales activities are audit records. Don't need edit/delete — typos -> just log a NEW corrected activity with note: "Correcting previous entry: …". Implementation: service + routes only have GET/POST. Controller no update/remove methods.
+3. **Lead convert = one big atomic $transaction, not 3 separate API calls from the frontend:** Lead service.convertLead(id, dto, req) runs all 3 writes + 3 audit write calls inside a SINGLE Prisma $transaction. If step 3 fails (Opportunity validation error) → steps 1+2 automatically ROLLBACK, no half-converted Customer sitting in DB with no Opportunity + lead stuck as NEW. Frontend gets single success/fail.
+4. **Zod XOR refine at validation layer + service-level FK existence check (double check):** Zod refine is first guard (fails 422 if 0 or 2+ of leadId/customerId/oppId are set). Service layer then runs SELECT on whichever FK is set — returns 404 if the customer/lead/opp doesn't exist (before INSERT). 2 checks are not redundant: Zod prevents programmer/API misuse; service layer handles race conditions (deleting the customer during the 200ms gap between validate and write).
+5. **RTK cache invalidation cross-module on lead convert:** convertLead invalidatesTags = [Leads, Customers, Opportunities] because it touches all 3. This is crucial so Kanban/Leads list auto-refreshes (lead gone from NEW → WON), Customers list auto-refreshes (new row), Opportunities list auto-refreshes (new OPP-xxxx row) — no manual refetch after success needed.
+
+### Interview Q&A (study cards for resume):
+**Q: "Talk about a domain transaction with multiple entities that must all succeed or fail together."**
+A: In the CRM module, we have a Convert Lead flow where clicking "Convert" on a qualified lead does THREE writes atomically: (1) Create a new Customer record with a generated CUST-% business code, copy name/email/phone/source from lead. (2) If the user checked "Create opportunity" (default on): create an Opportunity linked to the new customer and source leadId, stage=QUALIFICATION. (3) Update the lead itself to status=WON with wonLostAt=now timestamp, plus write 3 audit rows (CREATE Customer, CREATE Opportunity, UPDATE Lead — before=NEW after=WON). All of this runs inside a single Prisma `$transaction(async tx => { ... })` block plus an outer Prisma wrapper so all 6 writes are in one atomic unit. If step 2 fails because the Opportunity amount validation fails, EVERYTHING rolls back. No half-converted leads. Alternative: frontend does 3 POSTs in sequence — any failure in POST #2 leaves a dangling Customer + lead still in status=QUALIFIED, and the sales rep has to manually fix everything. Atomic database transactions are the correct solution for multi-entity business state changes.
+
+**Q: "How do you build a generic activity/audit timeline table that can be posted against multiple entity types?"**
+A: Single Activity table with three nullable FK columns: `leadId?`, `customerId?`, `opportunityId?` — plus a validation rule (Zod XOR refine) requiring EXACTLY ONE non-null of the three at API layer. This is called "exclusive arc" in data modeling. Implementation layers:
+- Layer 1: Zod schema `.refine()` with 422 validation error if zero or 2+ set.
+- Layer 2: Service runs a SELECT existence check on whichever FK is set → 404 per entity.
+- Layer 3: Insert activity row.
+- UI: Reuse a single Timeline component that accepts `entityId: "lead-xxx" | "customer-xxx"` parameter — renders type + activityAt + subject identically for all three.
+Alternative: LeadActivity + CustomerActivity + OpportunityActivity three separate tables. That would create 3× route/service/component/validator code (not DRY).
+
+**Q: "How do you structure a large backend to stay maintainable across 13 phases?"**
+A: Folder-per-resource pattern across each module (CRM → customers / contacts / leads / opportunities / activities / contracts). Each folder has EXACTLY four files:
+  1. validators.ts: Zod schemas + inferred DTO types.
+  2. services.ts: Pure business logic — receives validated DTOs, wraps each write in $transaction + writeAudit. Never touches req/res.
+  3. controllers.ts: Thin HTTP layer. destructures req.params.id / req.body → calls service → successResponse.
+  4. routes.ts: Express Router. Each route applies middleware pipeline: authenticate() → validate({query/body}) → authorize("crm.xxx.read") → controller method.
+Benefits: (a) Developer searching for "why does deleting a customer throw a 403?" only has to look at customers/routes.ts line N. (b) Services are independently testable with unit tests (no Express needed). (c) No 1000-line monolith files.
+
 ---
 
 ## Phase 6 — Inventory

@@ -27,7 +27,13 @@ export const apiSlice = createApi({
     "Permissions",
     "AuditLogs",
     "Profile",
-    // Phase 4+: "Customers", "Leads", "Contacts"
+    // Phase 4 CRM
+    "Customers",
+    "Contacts",
+    "Leads",
+    "Opportunities",
+    "Activities",
+    "Contracts",
     // Phase 5+: "Products", "Categories", "Warehouses", "Stock", "StockMovements"
     // Phase 6+: "Orders", "Invoices", "Payments"
     // Phase 7+: "Employees", "Attendance", "LeaveRequests"
