@@ -596,6 +596,7 @@ model Product {
   movements     StockMovement[]
   createdBy     User?           @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   orderItems    OrderItem[]
+  refunds       Refund[]
 
   @@index([sku])
   @@index([name])
@@ -730,6 +731,7 @@ model OrderItem {
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  refunds Refund[]
 
   @@index([orderId])
   @@index([productId])
@@ -784,6 +786,7 @@ model Payment {
   invoice  Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   order    Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
   receiver User?    @relation("PaymentReceivedBy", fields: [receivedBy], references: [id], onDelete: SetNull)
+  refunds  Refund[]
 
   @@index([paymentNumber])
   @@index([invoiceId])

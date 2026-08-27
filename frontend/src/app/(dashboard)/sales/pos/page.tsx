@@ -131,7 +131,7 @@ export default function PosPage() {
   const addToCart = useCallback((product: ProductItem) => {
     setCart((prev) => {
       const next = new Map(prev);
-      const price = parseNum(product.sellingPrice);
+      const price = parseNum((product as any).unitPrice ?? (product as any).sellingPrice);
       const existing = next.get(product.id);
       if (existing) {
         next.set(product.id, {
@@ -227,8 +227,7 @@ export default function PosPage() {
         header: "Price",
         cell: ({ row: { original: p } }) => (
           <MoneyDisplay
-            value={p.sellingPrice}
-            currency={p.currency ?? "USD"}
+            value={(p as any).unitPrice ?? (p as any).sellingPrice}
             className="font-semibold !w-auto"
             align="left"
           />
@@ -400,16 +399,17 @@ export default function PosPage() {
 
           <GlobalTable<ProductItem>
             columns={productColumns}
-            data={products}
-            meta={extract(productsRes as any).meta as any}
             serverSide
             pageSizeDefault={50}
             syncUrl={false}
             defaultSortBy="name"
             defaultSortOrder="asc"
             queryResult={{
-              data: productsRes?.data as any,
+              data: productsRes as any,
               isFetching,
+              isError: (productsRes as any)?.error || (productsRes as any)?.success === false,
+              error: (productsRes as any)?.error,
+              refetch,
             }}
             getRowId={(p) => p.id}
             wrapperHeightClassName="relative max-h-[calc(100vh-220px)] overflow-hidden"

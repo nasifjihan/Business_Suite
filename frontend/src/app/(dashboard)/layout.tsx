@@ -39,7 +39,10 @@ import { Button } from "@/components/ui/button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearCredentials } from "@/store/slices/authSlice";
 import { useLogoutMutation } from "@/lib/api/authEndpoints";
-import { PermissionGate, useHasPermission } from "@/components/auth/PermissionGate";
+import {
+  PermissionGate,
+  useHasPermission,
+} from "@/components/auth/PermissionGate";
 // Side-effect: register RTK endpoints for all business modules (injectEndpoints file-level side-effect must run)
 import "@/lib/api/crmEndpoints";
 import "@/lib/api/inventoryEndpoints";
@@ -56,41 +59,154 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/dashboard/health-test", label: "Connectivity Test", icon: Activity, badge: "Phase 1" },
+  {
+    href: "/dashboard/health-test",
+    label: "Connectivity Test",
+    icon: Activity,
+    badge: "Phase 1",
+  },
 ];
 
 type SubNavItem = NavItem & {};
 
 const SALES_SUBNAV: SubNavItem[] = [
-  { href: "/sales/pos", label: "Quick Sale (POS)", icon: ShoppingCart, requires: { any: ["sales.orders.checkout", "sales.orders.create"] } },
-  { href: "/sales/orders", label: "Orders", icon: Receipt, requires: { any: ["sales.orders.read"] } },
-  { href: "/sales/payments", label: "Payments", icon: CreditCard, requires: { any: ["sales.payments.read"] } },
-  { href: "/sales/refunds", label: "Refunds", icon: Undo2, requires: { any: ["sales.refunds.read"] } },
-  { href: "/sales/reports", label: "Daily Report", icon: BarChart3, requires: { any: ["sales.reports.read"] } },
-  { href: "/sales/credits", label: "Customer Credits", icon: Wallet, requires: { any: ["sales.credits.read"] } },
+  {
+    href: "/sales/pos",
+    label: "Quick Sale (POS)",
+    icon: ShoppingCart,
+    requires: { any: ["sales.orders.checkout", "sales.orders.create"] },
+  },
+  {
+    href: "/sales/orders",
+    label: "Orders",
+    icon: Receipt,
+    requires: { any: ["sales.orders.read"] },
+  },
+  {
+    href: "/sales/payments",
+    label: "Payments",
+    icon: CreditCard,
+    requires: { any: ["sales.payments.read"] },
+  },
+  {
+    href: "/sales/refunds",
+    label: "Refunds",
+    icon: Undo2,
+    requires: { any: ["sales.refunds.read"] },
+  },
+  {
+    href: "/sales/reports",
+    label: "Daily Report",
+    icon: BarChart3,
+    requires: { any: ["sales.reports.read"] },
+  },
+  {
+    href: "/sales/credits",
+    label: "Customer Credits",
+    icon: Wallet,
+    requires: { any: ["sales.credits.read"] },
+  },
 ];
 
 const CRM_SUBNAV: SubNavItem[] = [
-  { href: "/crm", label: "Overview", icon: LayoutDashboard, requires: { any: ["customers.read", "leads.read", "crm.customers.read"] } },
-  { href: "/crm/customers", label: "Customers", icon: Users, requires: { any: ["customers.read", "crm.customers.read"] } },
-  { href: "/crm/leads", label: "Leads", icon: Target, requires: { any: ["leads.read", "crm.leads.read"] } },
-  { href: "/crm/opportunities", label: "Deals", icon: HandCoins, requires: { any: ["crm.opportunities.read"] } },
-  { href: "/crm/contracts", label: "Contracts", icon: FileText, requires: { any: ["crm.contracts.read"] } },
+  {
+    href: "/crm",
+    label: "Overview",
+    icon: LayoutDashboard,
+    requires: { any: ["customers.read", "leads.read", "crm.customers.read"] },
+  },
+  {
+    href: "/crm/customers",
+    label: "Customers",
+    icon: Users,
+    requires: { any: ["customers.read", "crm.customers.read"] },
+  },
+  {
+    href: "/crm/leads",
+    label: "Leads",
+    icon: Target,
+    requires: { any: ["leads.read", "crm.leads.read"] },
+  },
+  {
+    href: "/crm/opportunities",
+    label: "Deals",
+    icon: HandCoins,
+    requires: { any: ["crm.opportunities.read"] },
+  },
+  {
+    href: "/crm/contracts",
+    label: "Contracts",
+    icon: FileText,
+    requires: { any: ["crm.contracts.read"] },
+  },
 ];
 
 const INVENTORY_SUBNAV: SubNavItem[] = [
-  { href: "/inventory", label: "Overview", icon: Package, requires: { any: ["inventory.categories.read", "inventory.products.read", "inventory.warehouses.read", "inventory.stock.read", "inventory.movements.read"] } },
-  { href: "/inventory/categories", label: "Categories", icon: Tags, requires: { any: ["inventory.categories.read"] } },
-  { href: "/inventory/products", label: "Products", icon: Boxes, requires: { any: ["inventory.products.read"] } },
-  { href: "/inventory/warehouses", label: "Warehouses", icon: Warehouse, requires: { any: ["inventory.warehouses.read"] } },
-  { href: "/inventory/stock", label: "Stock", icon: PackageOpen, requires: { any: ["inventory.stock.read"] } },
-  { href: "/inventory/movements", label: "Movements", icon: ArrowLeftRight, requires: { any: ["inventory.movements.read"] } },
+  {
+    href: "/inventory",
+    label: "Overview",
+    icon: Package,
+    requires: {
+      any: [
+        "inventory.categories.read",
+        "inventory.products.read",
+        "inventory.warehouses.read",
+        "inventory.stock.read",
+        "inventory.movements.read",
+      ],
+    },
+  },
+  {
+    href: "/inventory/categories",
+    label: "Categories",
+    icon: Tags,
+    requires: { any: ["inventory.categories.read"] },
+  },
+  {
+    href: "/inventory/products",
+    label: "Products",
+    icon: Boxes,
+    requires: { any: ["inventory.products.read"] },
+  },
+  {
+    href: "/inventory/warehouses",
+    label: "Warehouses",
+    icon: Warehouse,
+    requires: { any: ["inventory.warehouses.read"] },
+  },
+  {
+    href: "/inventory/stock",
+    label: "Stock",
+    icon: PackageOpen,
+    requires: { any: ["inventory.stock.read"] },
+  },
+  {
+    href: "/inventory/movements",
+    label: "Movements",
+    icon: ArrowLeftRight,
+    requires: { any: ["inventory.movements.read"] },
+  },
 ];
 
 const ADMIN_SUBNAV: SubNavItem[] = [
-  { href: "/administration/users", label: "Users", icon: Users, requires: "users.read" },
-  { href: "/administration/roles", label: "Roles & Permissions", icon: Shield, requires: "roles.read" },
-  { href: "/administration/audit-log", label: "Audit Log", icon: FileText, requires: "audit.read" },
+  {
+    href: "/administration/users",
+    label: "Users",
+    icon: Users,
+    requires: "users.read",
+  },
+  {
+    href: "/administration/roles",
+    label: "Roles & Permissions",
+    icon: Shield,
+    requires: "roles.read",
+  },
+  {
+    href: "/administration/audit-log",
+    label: "Audit Log",
+    icon: FileText,
+    requires: "audit.read",
+  },
 ];
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Business Suite";
@@ -107,19 +223,40 @@ export default function DashboardLayout({
   const [logoutTrigger] = useLogoutMutation();
   const user = useAppSelector((s) => s.auth.user);
 
-  const hasAnyAdmin = useHasPermission({ any: ["users.read", "roles.read", "audit.read"] });
+  const hasAnyAdmin = useHasPermission({
+    any: ["users.read", "roles.read", "audit.read"],
+  });
   const hasAnySales = useHasPermission({
     any: [
-      "sales.orders.read", "sales.orders.create", "sales.orders.checkout",
-      "sales.payments.read", "sales.refunds.read", "sales.reports.read", "sales.credits.read",
+      "sales.orders.read",
+      "sales.orders.create",
+      "sales.orders.checkout",
+      "sales.payments.read",
+      "sales.refunds.read",
+      "sales.reports.read",
+      "sales.credits.read",
     ],
   });
   const [salesOpen, setSalesOpen] = useState(true);
-  const hasAnyCRM = useHasPermission({ any: ["customers.read", "crm.customers.read", "leads.read", "crm.leads.read"] });
+  const hasAnyCRM = useHasPermission({
+    any: [
+      "customers.read",
+      "crm.customers.read",
+      "leads.read",
+      "crm.leads.read",
+    ],
+  });
   const [crmOpen, setCrmOpen] = useState(true);
-  const hasAnyInventory = useHasPermission({ any: ["inventory.categories.read", "inventory.products.read", "inventory.warehouses.read", "inventory.stock.read", "inventory.movements.read"] });
+  const hasAnyInventory = useHasPermission({
+    any: [
+      "inventory.categories.read",
+      "inventory.products.read",
+      "inventory.warehouses.read",
+      "inventory.stock.read",
+      "inventory.movements.read",
+    ],
+  });
   const [invOpen, setInvOpen] = useState(true);
-  const [adminOpen, setAdminOpen] = useState(true);
 
   const handleLogout = async () => {
     try {
@@ -132,7 +269,8 @@ export default function DashboardLayout({
   };
 
   const initials = user
-    ? `${user.firstName?.[0] ?? ""}${user.lastName?.[0] ?? ""}`.toUpperCase() || "U"
+    ? `${user.firstName?.[0] ?? ""}${user.lastName?.[0] ?? ""}`.toUpperCase() ||
+      "U"
     : "G";
   const fullName = user
     ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.email
@@ -144,13 +282,15 @@ export default function DashboardLayout({
       <aside
         className={cn(
           "border-r border-border bg-card flex flex-col transition-[width] duration-200 ease-out",
-          collapsed ? "w-[72px]" : "w-60"
+          collapsed ? "w-[72px]" : "w-60",
         )}
       >
         <div className="h-16 flex items-center border-b border-border px-4">
           <Building2 className="w-6 h-6 shrink-0 text-primary" />
           {!collapsed && (
-            <span className="ml-2 font-semibold tracking-tight truncate">{appName}</span>
+            <span className="ml-2 font-semibold tracking-tight truncate">
+              {appName}
+            </span>
           )}
         </div>
 
@@ -174,10 +314,15 @@ export default function DashboardLayout({
                   className={cn(
                     "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
-                    pathname === it.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                    pathname === it.href &&
+                      "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium",
                   )}
                 >
-                  <it.icon className={cn("w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary")} />
+                  <it.icon
+                    className={cn(
+                      "w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary",
+                    )}
+                  />
                   {!collapsed && (
                     <>
                       <span className="flex-1 truncate">{it.label}</span>
@@ -193,62 +338,7 @@ export default function DashboardLayout({
             );
           })}
 
-          {/* CRM drawer — shown only if user has any CRM sub-permission */}
-          {hasAnyCRM && (
-            <>
-              {!collapsed ? (
-                <button
-                  type="button"
-                  className="mt-2 w-full group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  onClick={() => setCrmOpen((v) => !v)}
-                >
-                  <Users className="w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary" />
-                  <span className="flex-1 truncate text-left">CRM</span>
-                  <ChevronDown
-                    className={cn(
-                      "w-4 h-4 text-slate-400 transition-transform",
-                      crmOpen && "rotate-180"
-                    )}
-                  />
-                </button>
-              ) : (
-                <div className="mt-2 h-6 flex items-center justify-center text-[10px] text-slate-400">
-                  CRM
-                </div>
-              )}
-              {crmOpen &&
-                CRM_SUBNAV.map((sub) => {
-                  let permProps:
-                    | { one: string }
-                    | { any: string[] }
-                    | { all: string[] };
-                  if (typeof sub.requires === "string") {
-                    permProps = { one: sub.requires };
-                  } else if (sub.requires) {
-                    permProps = sub.requires as { any: string[] } | { all: string[] };
-                  } else {
-                    permProps = { one: "*" };
-                  }
-                  return (
-                    <PermissionGate key={sub.href} {...permProps}>
-                      <Link
-                        href={sub.href}
-                        className={cn(
-                          "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
-                          collapsed ? "justify-center" : "pl-9",
-                          pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
-                        )}
-                      >
-                        <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
-                        {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
-                      </Link>
-                    </PermissionGate>
-                  );
-                })}
-            </>
-          )}
-
-          {/* Sales & POS drawer — shown only if user has any Sales sub-permission (TOP-MOST business module) */}
+          {/* Sales & POS drawer — TOP-MOST business module (cashiers open app → sell = first click) */}
           {hasAnySales && (
             <>
               {!collapsed ? (
@@ -262,7 +352,7 @@ export default function DashboardLayout({
                   <ChevronDown
                     className={cn(
                       "w-4 h-4 text-slate-400 transition-transform",
-                      salesOpen && "rotate-180"
+                      salesOpen && "rotate-180",
                     )}
                   />
                 </button>
@@ -280,7 +370,9 @@ export default function DashboardLayout({
                   if (typeof sub.requires === "string") {
                     permProps = { one: sub.requires };
                   } else if (sub.requires) {
-                    permProps = sub.requires as { any: string[] } | { all: string[] };
+                    permProps = sub.requires as
+                      | { any: string[] }
+                      | { all: string[] };
                   } else {
                     permProps = { one: "*" };
                   }
@@ -291,11 +383,18 @@ export default function DashboardLayout({
                         className={cn(
                           "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
                           collapsed ? "justify-center" : "pl-9",
-                          pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                          pathname === sub.href &&
+                            "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium",
                         )}
                       >
-                        <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
-                        {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
+                        <sub.icon
+                          className={cn(
+                            "w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary",
+                          )}
+                        />
+                        {!collapsed && (
+                          <span className="flex-1 truncate">{sub.label}</span>
+                        )}
                       </Link>
                     </PermissionGate>
                   );
@@ -317,7 +416,7 @@ export default function DashboardLayout({
                   <ChevronDown
                     className={cn(
                       "w-4 h-4 text-slate-400 transition-transform",
-                      invOpen && "rotate-180"
+                      invOpen && "rotate-180",
                     )}
                   />
                 </button>
@@ -335,7 +434,9 @@ export default function DashboardLayout({
                   if (typeof sub.requires === "string") {
                     permProps = { one: sub.requires };
                   } else if (sub.requires) {
-                    permProps = sub.requires as { any: string[] } | { all: string[] };
+                    permProps = sub.requires as
+                      | { any: string[] }
+                      | { all: string[] };
                   } else {
                     permProps = { one: "*" };
                   }
@@ -346,11 +447,82 @@ export default function DashboardLayout({
                         className={cn(
                           "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
                           collapsed ? "justify-center" : "pl-9",
-                          pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                          pathname === sub.href &&
+                            "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium",
                         )}
                       >
-                        <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
-                        {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
+                        <sub.icon
+                          className={cn(
+                            "w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary",
+                          )}
+                        />
+                        {!collapsed && (
+                          <span className="flex-1 truncate">{sub.label}</span>
+                        )}
+                      </Link>
+                    </PermissionGate>
+                  );
+                })}
+            </>
+          )}
+
+          {/* CRM drawer — shown only if user has any CRM sub-permission */}
+          {hasAnyCRM && (
+            <>
+              {!collapsed ? (
+                <button
+                  type="button"
+                  className="mt-2 w-full group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  onClick={() => setCrmOpen((v) => !v)}
+                >
+                  <Users className="w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary" />
+                  <span className="flex-1 truncate text-left">CRM</span>
+                  <ChevronDown
+                    className={cn(
+                      "w-4 h-4 text-slate-400 transition-transform",
+                      crmOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+              ) : (
+                <div className="mt-2 h-6 flex items-center justify-center text-[10px] text-slate-400">
+                  CRM
+                </div>
+              )}
+              {crmOpen &&
+                CRM_SUBNAV.map((sub) => {
+                  let permProps:
+                    | { one: string }
+                    | { any: string[] }
+                    | { all: string[] };
+                  if (typeof sub.requires === "string") {
+                    permProps = { one: sub.requires };
+                  } else if (sub.requires) {
+                    permProps = sub.requires as
+                      | { any: string[] }
+                      | { all: string[] };
+                  } else {
+                    permProps = { one: "*" };
+                  }
+                  return (
+                    <PermissionGate key={sub.href} {...permProps}>
+                      <Link
+                        href={sub.href}
+                        className={cn(
+                          "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                          collapsed ? "justify-center" : "pl-9",
+                          pathname === sub.href &&
+                            "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium",
+                        )}
+                      >
+                        <sub.icon
+                          className={cn(
+                            "w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary",
+                          )}
+                        />
+                        {!collapsed && (
+                          <span className="flex-1 truncate">{sub.label}</span>
+                        )}
                       </Link>
                     </PermissionGate>
                   );
@@ -368,11 +540,13 @@ export default function DashboardLayout({
                   onClick={() => setAdminOpen((v) => !v)}
                 >
                   <Settings className="w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary" />
-                  <span className="flex-1 truncate text-left">Administration</span>
+                  <span className="flex-1 truncate text-left">
+                    Administration
+                  </span>
                   <ChevronDown
                     className={cn(
                       "w-4 h-4 text-slate-400 transition-transform",
-                      adminOpen && "rotate-180"
+                      adminOpen && "rotate-180",
                     )}
                   />
                 </button>
@@ -390,7 +564,9 @@ export default function DashboardLayout({
                   if (typeof sub.requires === "string") {
                     permProps = { one: sub.requires };
                   } else if (sub.requires) {
-                    permProps = sub.requires as { any: string[] } | { all: string[] };
+                    permProps = sub.requires as
+                      | { any: string[] }
+                      | { all: string[] };
                   } else {
                     permProps = { one: "*" };
                   }
@@ -401,11 +577,18 @@ export default function DashboardLayout({
                         className={cn(
                           "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
                           collapsed ? "justify-center" : "pl-9",
-                          pathname === sub.href && "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium"
+                          pathname === sub.href &&
+                            "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium",
                         )}
                       >
-                        <sub.icon className={cn("w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary")} />
-                        {!collapsed && <span className="flex-1 truncate">{sub.label}</span>}
+                        <sub.icon
+                          className={cn(
+                            "w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary",
+                          )}
+                        />
+                        {!collapsed && (
+                          <span className="flex-1 truncate">{sub.label}</span>
+                        )}
                       </Link>
                     </PermissionGate>
                   );
@@ -433,7 +616,9 @@ export default function DashboardLayout({
             {collapsed ? (
               <ChevronRight className="w-4 h-4" />
             ) : (
-              <><ChevronLeft className="w-4 h-4" /> Collapse</>
+              <>
+                <ChevronLeft className="w-4 h-4" /> Collapse
+              </>
             )}
           </Button>
         </div>
@@ -465,7 +650,11 @@ export default function DashboardLayout({
               <div className="absolute right-0 mt-2 w-56 z-30 rounded-xl border border-border bg-popover shadow-lg overflow-hidden text-sm">
                 <div className="px-4 py-3 border-b border-border">
                   <p className="font-medium text-foreground">{fullName}</p>
-                  {user && <p className="text-xs text-muted-foreground truncate">{user.email}</p>}
+                  {user && (
+                    <p className="text-xs text-muted-foreground truncate">
+                      {user.email}
+                    </p>
+                  )}
                 </div>
                 <Link
                   href="/profile"

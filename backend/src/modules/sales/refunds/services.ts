@@ -2,24 +2,24 @@ import type { Request } from "express";
 import { prisma } from "@/lib/prisma";
 import type { CreateRefundDto, ListRefundsQuery } from "./validators";
 import { AuditAction, RefundReason, OrderStatus } from "@prisma/client";
-import {
-  applyPagination,
-  buildPaginationMeta,
-} from "@/utils/pagination";
-import {
-  NotFoundError,
-  UnprocessableEntityError,
-} from "@/lib/errors";
+import { applyPagination, buildPaginationMeta } from "@/utils/pagination";
+import { NotFoundError, UnprocessableEntityError } from "@/lib/errors";
 import { omitSensitive, writeAudit, extractMeta } from "@/middleware/audit";
 
-export type ListRefundsResponse = Awaited<ReturnType<typeof RefundService["list"]>>;
+export type ListRefundsResponse = Awaited<
+  ReturnType<(typeof RefundService)["list"]>
+>;
 
-const generateRefundNumber = async (tx: { refund: { count: (args: object) => Promise<number> } }): Promise<string> => {
+const generateRefundNumber = async (tx: {
+  refund: { count: (args: object) => Promise<number> };
+}): Promise<string> => {
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, "0");
   const prefix = `REF-${yyyy}${mm}`;
-  const count = await tx.refund.count({ where: { refundNumber: { startsWith: prefix } } });
+  const count = await tx.refund.count({
+    where: { refundNumber: { startsWith: prefix } },
+  });
   return `${prefix}-${String(count + 1).padStart(5, "0")}`;
 };
 
@@ -32,8 +32,10 @@ export const RefundService = {
     if (q.restock !== undefined) where.restock = q.restock;
     if (q.dateFrom || q.dateTo) {
       where.refundDate = {};
-      if (q.dateFrom) (where.refundDate as Record<string, unknown>).gte = q.dateFrom;
-      if (q.dateTo) (where.refundDate as Record<string, unknown>).lte = q.dateTo;
+      if (q.dateFrom)
+        (where.refundDate as Record<string, unknown>).gte = q.dateFrom;
+      if (q.dateTo)
+        (where.refundDate as Record<string, unknown>).lte = q.dateTo;
     }
     if (q.search) {
       where.OR = [
@@ -46,7 +48,10 @@ export const RefundService = {
       ? { [q.sortBy]: q.sortOrder }
       : { refundDate: q.sortOrder };
 
-    const { skip, take } = applyPagination({ page: q.page, pageSize: q.pageSize });
+    const { skip, take } = applyPagination({
+      page: q.page,
+      pageSize: q.pageSize,
+    });
 
     const [totalItems, items] = await Promise.all([
       prisma.refund.count({ where }),
@@ -57,14 +62,28 @@ export const RefundService = {
         orderBy,
         include: {
           order: { select: { orderNumber: true, totalAmount: true } },
-          orderItem: { select: { id: true, productName: true, quantity: true, unitPrice: true } },
+          orderItem: {
+            select: {
+              id: true,
+              productName: true,
+              quantity: true,
+              unitPrice: true,
+            },
+          },
           product: { select: { id: true, sku: true, name: true } },
           processor: { select: { id: true, firstName: true, lastName: true } },
         },
       }),
     ]);
 
-    return { items, meta: buildPaginationMeta({ page: q.page, pageSize: q.pageSize, totalItems }) };
+    return {
+      items,
+      meta: buildPaginationMeta({
+        page: q.page,
+        pageSize: q.pageSize,
+        totalItems,
+      }),
+    };
   },
 
   async create(dto: CreateRefundDto, req: Request) {
@@ -88,7 +107,9 @@ export const RefundService = {
       for (const item of dto.items) {
         const orderItem = orderItemMap.get(item.orderItemId);
         if (!orderItem) {
-          throw new UnprocessableEntityError(`Order item ${item.orderItemId} not found in order.`);
+          throw new UnprocessableEntityError(
+            `Order item ${item.orderItemId} not found in order.`,
+          );
         }
         const refundableQty = orderItem.quantity - orderItem.refundedQty;
         if (item.quantity > refundableQty) {
@@ -155,7 +176,8 @@ export const RefundService = {
       const beforeOrder = { ...order };
       const allItemsRefunded = order.items.every((oi) => {
         const refundItem = dto.items.find((di) => di.orderItemId === oi.id);
-        const totalRefundedForItem = oi.refundedQty + (refundItem?.quantity ?? 0);
+        const totalRefundedForItem =
+          oi.refundedQty + (refundItem?.quantity ?? 0);
         return totalRefundedForItem >= oi.quantity;
       });
 
@@ -178,9 +200,12 @@ export const RefundService = {
         const unitPrice = item.unitPrice ?? Number(orderItem.unitPrice);
         const itemAmount = unitPrice * item.quantity;
 
-        const refund = await tx.refund.create({
+        const refund: any = await tx.refund.create({
           data: {
-            refundNumber: dto.items.length > 1 ? `${refundNumber}-${refunds.length + 1}` : refundNumber,
+            refundNumber:
+              dto.items.length > 1
+                ? `${refundNumber}-${refunds.length + 1}`
+                : refundNumber,
             orderId: dto.orderId,
             orderItemId: item.orderItemId,
             paymentId: dto.paymentId || null,
