@@ -110,16 +110,20 @@ enum MovementType {
 enum OrderStatus {
   PENDING
   CONFIRMED
+  PROCESSING
   SHIPPED
   DELIVERED
   COMPLETED
   CANCELLED
+  REFUNDED
 }
 
 enum PaymentStatus {
+  PENDING
   UNPAID
   PARTIAL
   PAID
+  FAILED
   REFUNDED
 }
 
@@ -128,6 +132,16 @@ enum PaymentMethod {
   CARD
   MOBILE_BANKING
   BANK_TRANSFER
+  CREDIT
+  WALLET
+}
+
+enum RefundReason {
+  DEFECTIVE
+  WRONG_ITEM
+  DAMAGED
+  CUSTOMER_CHANGE
+  OTHER
 }
 
 enum InvoiceStatus {
@@ -260,6 +274,7 @@ model User {
   movementUser      StockMovement[] @relation("MovementUser")
   createdOrders     Order[]         @relation("OrderCreatedBy")
   paymentsReceived  Payment[]       @relation("PaymentReceivedBy")
+  processedRefunds  Refund[]        @relation("RefundProcessedBy")
   departments       Department[]
   leaveApprovals    LeaveRequest[]  @relation("LeaveApprover")
 
@@ -352,6 +367,7 @@ model Customer {
   postalCode   String?
   totalSpent   Decimal        @default(0) @db.Decimal(14, 2)
   orderCount   Int            @default(0)
+  creditBalance Decimal       @default(0) @db.Decimal(14, 2)
   notes        String?
   source       LeadSource     @default(OTHER)
   status       CustomerStatus @default(ACTIVE)
@@ -673,6 +689,7 @@ model Order {
   orderDate      DateTime      @default(now()) @db.Date
   dueDate        DateTime?     @db.Date
   notes          String?
+  referenceNo    String?
   createdBy      String?
   createdAt      DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
@@ -682,6 +699,8 @@ model Order {
   creator   User?       @relation("OrderCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   items     OrderItem[]
   invoices  Invoice[]
+  payments  Payment[]
+  refunds   Refund[]
 
   @@index([orderNumber])
   @@index([customerId])
@@ -691,6 +710,7 @@ model Order {
   @@index([orderDate])
   @@index([createdBy])
   @@index([createdAt])
+  @@index([referenceNo])
 }
 
 model OrderItem {
@@ -703,7 +723,9 @@ model OrderItem {
   unitPrice      Decimal  @default(0) @db.Decimal(14, 2) // sellingPrice snapshot
   discountAmount Decimal  @default(0) @db.Decimal(14, 2)
   taxAmount      Decimal  @default(0) @db.Decimal(14, 2)
+  taxRatePercent Int      @default(0)
   lineTotal      Decimal  @default(0) @db.Decimal(14, 2)
+  refundedQty    Int      @default(0)
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -744,28 +766,65 @@ model Invoice {
 }
 
 model Payment {
-  id            String        @id @default(uuid())
-  paymentNumber String        @unique
-  invoiceId     String
-  amount        Decimal       @default(0) @db.Decimal(14, 2)
-  method        PaymentMethod
-  status        PaymentStatus @default(PAID)
-  paidAt        DateTime      @default(now()) @db.Timestamptz(6)
-  reference     String? // transaction id, check number, etc.
-  notes         String?
-  receivedBy    String?
-  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+  id             String        @id @default(uuid())
+  paymentNumber  String        @unique
+  invoiceId      String?
+  orderId        String?
+  amount         Decimal       @default(0) @db.Decimal(14, 2)
+  method         PaymentMethod
+  status         PaymentStatus @default(PAID)
+  paidAt         DateTime      @default(now()) @db.Timestamptz(6)
+  transactionFee Decimal       @default(0) @db.Decimal(14, 2)
+  reference      String? // transaction id, check number, etc.
+  notes          String?
+  receivedBy     String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
 
-  invoice  Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
-  receiver User?   @relation("PaymentReceivedBy", fields: [receivedBy], references: [id], onDelete: SetNull)
+  invoice  Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  order    Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  receiver User?    @relation("PaymentReceivedBy", fields: [receivedBy], references: [id], onDelete: SetNull)
 
   @@index([paymentNumber])
   @@index([invoiceId])
+  @@index([orderId])
   @@index([method])
   @@index([status])
   @@index([paidAt])
   @@index([receivedBy])
+}
+
+model Refund {
+  id             String       @id @default(uuid())
+  orderId        String?
+  orderItemId    String?
+  paymentId      String?
+  productId      String?
+  refundNumber   String       @unique
+  amount         Decimal      @default(0) @db.Decimal(14, 2)
+  quantity       Int          @default(0)
+  reason         RefundReason
+  restock        Boolean      @default(true)
+  note           String?
+  processedBy    String?
+  refundDate     DateTime     @default(now()) @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  order     Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  payment   Payment?   @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  product   Product?   @relation(fields: [productId], references: [id], onDelete: SetNull)
+  processor User?      @relation("RefundProcessedBy", fields: [processedBy], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([paymentId])
+  @@index([productId])
+  @@index([refundNumber])
+  @@index([reason])
+  @@index([processedBy])
+  @@index([refundDate])
 }
 
 // ═══════════════════════════════════════════════════════════════════════

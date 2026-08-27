@@ -40,7 +40,13 @@ export const apiSlice = createApi({
     "Warehouses",
     "Stock",
     "Movements",
-    // Phase 7+: "Orders", "Invoices", "Payments"
+    // Phase 7 Sales & POS
+    "Orders",
+    "OrderItems",
+    "Payments",
+    "Refunds",
+    "Reports",
+    "Credits",
     // Phase 8+: "Employees", "Attendance", "LeaveRequests"
     // Phase 9+: "DashboardKPIs"
   ],

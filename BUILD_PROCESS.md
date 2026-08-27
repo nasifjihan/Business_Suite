@@ -1152,51 +1152,269 @@ git commit -m "feat(phase-6): Inventory module (5 Prisma models (Stock composite
 
 ## 10. PHASE 7 — POS & Sales Module (Atomic Transactions)
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ COMPLETED — Editor code committed. Pending: user runs prisma generate + migrate dev + seed + tsc + 10 browser gates.
 
-**This is the most critical phase — the "money path" of the application.** If this breaks, inventory and financial data become inconsistent. We use ONE Prisma database transaction for the entire checkout. If ANY step fails, EVERYTHING rolls back.
+**This is the most critical phase — the "money path" of the application.** If this breaks, inventory and financial data become inconsistent. ONE Prisma database transaction wraps the entire 13-step checkout. Any single step failure rolls back ALL writes including audit rows (Express middleware audit logging cannot do this because it runs post-response). Frontend status badges strictly 6-families (emerald/rose/slate/sky/violet/teal — ZERO yellow/amber anywhere).
 
-### Tables
-- `orders` (orderNumber UNIQUE, customerId, status, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus, orderDate, createdBy)
-- `order_items` (orderId, productId, quantity, unitPrice, discountAmount, taxAmount, lineTotal)
-- `invoices` (invoiceNumber UNIQUE, orderId, customerId, subtotal, discountAmount, taxAmount, totalAmount, status, issuedAt, dueAt)
-- `payments` (paymentNumber UNIQUE, invoiceId, amount, method [CASH/CARD/MOBILE_BANKING/BANK_TRANSFER], status, paidAt, reference, receivedBy)
+### 10.1 Data Model Changes (Enum Augments + 4 Model Augments + New Refund Table)
 
-### Atomic Checkout Transaction (in `sales.service.ts → createSale()`)
+**3 existing enums extended + 1 new RefundReason enum:**
+
+| Enum | Values | Tone map (strict 6-family) |
+| --- | --- | --- |
+| `OrderStatus` | PENDING, CONFIRMED, PROCESSING, SHIPPED, DELIVERED, COMPLETED, CANCELLED, REFUNDED (8) | PENDING=slate, CONFIRMED=sky, PROCESSING=violet, SHIPPED=teal, DELIVERED=emerald, COMPLETED=emerald, CANCELLED=rose, REFUNDED=rose |
+| `PaymentStatus` | PENDING, UNPAID, PARTIAL, PAID, FAILED, REFUNDED (6) | PENDING=slate, UNPAID=slate, PARTIAL=violet, PAID=emerald, FAILED=rose, REFUNDED=rose |
+| `PaymentMethod` | CASH, CARD, MOBILE_BANKING, BANK_TRANSFER, CREDIT, WALLET (6) | CASH=emerald, CARD=sky, MOBILE_BANKING=violet, BANK_TRANSFER=sky, CREDIT=violet, WALLET=teal |
+| `RefundReason` NEW | DEFECTIVE, WRONG_ITEM, DAMAGED, CUSTOMER_CHANGE, OTHER (5) | DEFECTIVE=rose, WRONG_ITEM=slate, DAMAGED=violet, CUSTOMER_CHANGE=sky, OTHER=slate |
+
+**4 model augments:**
+
+1. **Customer** — added `creditBalance Decimal(14,2) @default(0)` for on-account customer credit (see Credits page).
+2. **Order** — added `referenceNo String?`, `payments Payment[]` relation (new!), `refunds Refund[]` relation (new!).
+3. **OrderItem** — added `taxRatePercent Int @default(0)`, `refundedQty Int @default(0)` so refund validations can compute `refundableQty = originalQty - refundedQty` with strict max partial-refund check.
+4. **Payment** — BREAKING: `invoiceId` **became nullable** (was required!) + added `orderId String? FK` + `transactionFee Decimal(14,2) @default(0)` for processor fees. SetNull on delete; append-only so soft-delete not needed.
+
+**NEW standalone Refund table (9 fields + 8 indexes):**
+```
+Refund(id, orderId?, orderItemId?, paymentId?, productId?, refundNumber UNIQUE,
+       amount, quantity, reason enum, restock bool DEFAULT true,
+       note?, processedBy? userId, refundDate, createdAt, updatedAt)
+```
+`processedBy` uses explicit `@relation("RefundProcessedBy")` opposite `User.processedRefunds` (P6 schema P1012 relation-name lesson re-used — every FK relation must be named on both sides).
+
+### 10.2 RBAC — 13 Granular Permission Codes × 7 Role Tiers (Additive Only)
+
+`backend/prisma/seed_phase7_sales.ts` — follows additive-only pattern (no deleteMany; only upsert diffs). All codes prefixed `sales.` for module grouping.
+
+**5 permissions Orders, 2 Payments, 2 Refunds, 1 Reports, 3 Credits — total 13:**
+```
+sales.orders.read      sales.orders.create    sales.orders.update  sales.orders.delete
+sales.orders.checkout  # ← POS-specific gate
+sales.payments.read    sales.payments.create  # append-only (no update/delete)
+sales.refunds.read     sales.refunds.create   # append-only corrections via reversals not edit
+sales.reports.read
+sales.credits.read     sales.credits.update   sales.credits.adjust
+```
+
+**7 tier grants (additive):**
+- SUPER_ADMIN / ADMIN / MANAGER → all 13 codes
+- SALES → 9 codes (no sales.refunds.delete or destructive)
+- CASHIER → 4 codes ONLY POS: orders checkout/create + payments create + orders read (cannot refund)
+- HR → NONE
+- VIEWER → 5 read-only codes (orders/payments/refunds/reports/credits read)
+
+### 10.3 Backend Module Structure (24 files total = 5 modules × 4 layers)
+
+Mount: `routes/index.ts → apiV1Router.use("/sales", salesRouter)` placed after inventory mount.
 
 ```
-PRISMA TRANSACTION BEGIN
-│
-├── 1. FOR EACH cart item:
-│   ├── SELECT stock WHERE productId=? AND warehouseId=? FOR UPDATE  ← row lock
-│   ├── available = quantity - reservedQuantity
-│   ├── IF quantity_ordered > available → THROW BusinessRuleError("Insufficient stock for X")
-│   └── (locks prevent race condition — second concurrent checkout waits for first transaction to commit)
-│
-├── 2. INSERT order + order_items (use sellingPrice FROM DB, NOT from client — client can tamper)
-├── 3. INSERT invoice linked to order
-├── 4. INSERT payment (if payment was taken at checkout)
-├── 5. FOR EACH cart item:
-│   └── UPDATE stock: quantity = quantity - qty_ordered
-│   └── INSERT stock_movement (type=SALE, referenceType=ORDER, referenceId=order.id)
-│
-PRISMA TRANSACTION COMMIT (ALL SUCCESS) OR ROLLBACK (ANY FAILURE)
+backend/src/modules/sales/
+├── routes.ts                 # mounts /orders /payments /refunds /reports /credits
+├── orders/ (4 files)         # validators + routes + service + audit snapshots
+│   ├── OrderService.checkout(body, user)  ← 13-STEP SINGLE $transaction
+├── payments/ (4 files)       # POST only (append-only ledger). CREATE auto-updates Order.paymentStatus ratio PAID/PARTIAL/UNPAID
+├── refunds/ (4 files)        # 5-STEP $tx atomic refund. Restock flag → UPDATE Stock qty if true
+├── reports/ (4 files)        # GET /daily-summary. GroupBy aggregate NO new DB table (pure SELECT)
+└── credits/ (4 files)        # List + Adjust POST. Guard balanceAfter >= 0 THROWS if negative delta overdraws
 ```
 
-**Row-level locking**: `FOR UPDATE` tells PostgreSQL "I am going to update this row, give me exclusive access". If another checkout tries to buy the same product at the exact same moment, it blocks (waits) until the first transaction commits or rolls back. This guarantees no negative stock and no double-sales.
+#### 10.3.1 ORDER CHECKOUT — 13 Step Single $transaction Atomic Money Path
 
-### POS Frontend (`app/(dashboard)/pos/page.tsx`)
-- Left 70%: Product search bar + product grid (cards with image, name, price, stock qty). Click adds to cart. Keyboard-friendly: search bar auto-focuses on load, arrow keys + Enter to add product.
-- Right 30%: Cart sidebar. Items list with qty +/- buttons, line total. Order-level discount %. Tax auto-calc. Customer selector dropdown (with quick "Walk-in Customer" default). Payment method selector. Grand total display. Checkout button.
-- Checkout dispatches RTK Query mutation → shows loading spinner → on success: prints receipt view modal (printable with `window.print()`) → clears cart.
-- Cart state is in a Redux Toolkit slice (`store/slices/cartSlice.ts`), persisted to `localStorage` so cart survives page refresh.
+```
+Prisma.$transaction([
+  S1  findMany products WHERE productId IN cart FOR UPDATE   // row locks prevent concurrent oversell
+  S2  forEach: IF sellingPrice differs from client → OVERWRITE with DB price, never trust client $
+  S3  forEach: SELECT Stock WHERE productId, warehouseId FOR UPDATE
+          IF stock.quantity - reserved < cartQty → BusinessRuleError(422 insufficient)
+  S4  server RECALC subtotal, discount, tax, total (AGAIN not trust client totals)
+  S5  gen orderNumber INV-NNNN inside tx using REGEXP_REPLACE numeric sort + padStart 4
+  S6  INSERT Order with snapshots (denormalized customerName, warehouseCode not just FK)
+  S7  forEach INSERT OrderItem with productName/SKU/unitPrice-snapshot, taxRatePercent, refundedQty=0
+  S8  INSERT Invoice linked to OrderId with invNumber INV-NNNN
+  S9  IF payments[] provided: INSERT Payment (append-only) with status=PAID by default
+  S10 paymentStatus ratio compute on Order (SUM(payments)/orderTotal): <3%=UNPAID, <97%=PARTIAL, else=PAID
+  S11 forEach UPDATE Stock.quantity -= cartQty + reservedQty -= cartQty
+  S12 bulk INSERT StockMovement × N type=SALE referenceType=ORDER
+  S13 writeAudit 3× bulk in same $tx: AUDIT ORDER_CREATE, AUDIT PAYMENT_CREATE, AUDIT STOCK_SALE
+]) → COMMIT. Any step fail → ROLLBACK ALL.
+```
 
-### Sales History (`app/(dashboard)/sales/page.tsx`)
-- Orders table with filters (date range, customer, status, paymentStatus), server-side pagination
-- Order detail: Order items, invoice, payment records, stock movements linked, printable invoice view
-- Cancel order button: Requires permission `orders.cancel`. Cancelling reverses everything in another transaction (restores stock, creates RETURN stock movements, sets order.status=CANCELLED, marks invoice as VOID).
+Counter code generation inside transaction pattern: `findFirst orderBy: { orderNumber: 'desc' }` then regex numeric strip, +1, padStart 4. Works serialized because inside same $tx (PostgreSQL serializable snapshot isolation if needed).
 
-**Concepts learned**: ACID properties, database transactions, row-level locking (`SELECT ... FOR UPDATE`), concurrent access patterns, pessimistic vs optimistic locking, why you NEVER trust client-side prices, localStorage persistence for cart state, print CSS stylesheets (`@media print`), window.print() receipts.
+#### 10.3.2 REFUND CREATE — 5 Step Atomic Tx
+
+```
+$transaction([
+  R1  SELECT orderItem, originalQty. refundable = originalQty - refundedQty.
+      IF requestedQty > refundable → BusinessRuleError 422
+  R2  UPDATE orderItem.refundedQty += requestedQty
+  R3  IF restock = true THEN UPDATE Stock.quantity += requestedQty  (← important: optional flag!)
+      AND INSERT movement type=RETURN, reference=REFUND
+  R4  INSERT Refund row w/ REF- counter
+  R5  writeAudit 2× bulk: AUDIT REFUND_CREATE + AUDIT(optional) STOCK_RESTOCK
+])
+```
+Append-only ledger pattern: Refunds/Credits/Payments never have PATCH/DELETE routes. Mistakes corrected via reversal transaction (new refund row).
+
+#### 10.3.3 Reports & Credits Endpoints (Pure Aggregate)
+
+- `GET /reports/daily-summary?from=&to=&warehouseId=` — groups orders by date. Returns: `{ totalOrders, totalRevenue, avgOrderValue, itemsSold, paymentMethodsBreakdown[{method,amount,pct}], topProducts[{productId,sku,name,qty,revenue}] }`. No new materialized tables.
+- `POST /credits/adjust {customerId, deltaAmount, note}` — Zod refine: `customer.creditBalance + deltaAmount >= 0`. Throws BusinessRuleError if resulting balance negative (no overdraw).
+
+### 10.4 Frontend RTK Query Injection (TagTypes Fix From P6 Lesson)
+
+**apiSlice.ts static tagTypes literal array** extended inline (NOT runtime `.push()`) with 6 Sales tags — because P6 Category TS2322 lesson: TypeScript sees only static union, not runtime pushes. Added:
+```ts
+tagTypes: [... prior,
+  "Orders", "OrderItems", "Payments", "Refunds", "Reports", "Credits"
+]
+```
+
+`salesEndpoints.ts` ~26 endpoints injected, 40+ interfaces exported. Cross-module tag invalidation is critical because checkout/refund updates stock:
+- `checkout` mutation invalidates: `[Orders, Payments, Stock, Products, Reports, Credits]` ×6 tags.
+- `createRefund` invalidates: `[Refunds, Orders, Payments, Stock, Reports, Credits]` ×6 tags (restock adds stock back).
+- `adjustCredit` invalidates `[Credits, Reports]`.
+
+All pages import hooks generated: `useCheckoutOrderMutation`, `useListOrdersQuery`, `useGetOrderByIdQuery`, `useDailyReportQuery`, etc. Layout.tsx now side-effect imports crmEndpoints + inventoryEndpoints + salesEndpoints on dashboard entry so injectEndpoints file-level side-effect fires even if user lands directly on `/dashboard` (prevents silent "Tag not in tagTypes union" cache invalidation undefined bug).
+
+### 10.5 Frontend 7 Pages — Layout Reorder + Module Priority
+
+**Drawer final priority order (TOP → BOTTOM): Dashboard Top Nav → Sales & POS → Inventory → CRM → Administration.** Cashiers open app → ring sales = highest click frequency drawer first.
+
+**Layout.tsx changes:**
+1. `SALES_SUBNAV SubNavItem[]` 6 granular links: POS (requires checkout/create), Orders (orders.read), Payments (payments.read), Refunds (refunds.read), Daily Report (reports.read), Credits (credits.read).
+2. `hasAnySales` computed via `useHasPermission({ any: [7 codes] })` — entire drawer hidden if user has zero sales perms.
+3. `salesOpen` useState expand/collapse button — identical JSX pattern as crmOpen/invOpen/adminOpen.
+4. Old top-level flat NAV links `/crm /inventory /pos /sales /hrm` all REMOVED — now all modules live in expandable drawers.
+
+**7 Frontend Pages created (all use client, URL state pagination/sort back-button):**
+
+#### 10.5.1 Quick Sale POS `/sales/pos`
+- Responsive 2-column grid (left products list, right cart sidebar sticky).
+- Products pane: SearchInput 300ms debounce → `useListProductsQuery` → GlobalTable SKU/Name/Status/Price. Click row or Add button adds to cart (stacking same product increments qty).
+- Cart sidebar: Header items count pill badge. Lines list with inline qty stepper (Plus/Minus/number cell bordered), per-line MoneyDisplay total, Trash2 remove.
+- Totals block: Subtotal / tax GlobalSelect 0/5/7.5/10/20% / fixed discount MoneyInput / Grand Total large font.
+- **PAY button** → GlobalModal `id="posPaymentForm"` form `id="posPayForm"`.
+  - Fields: method GlobalSelect (CASH/CARD/BANK_TRANSFER/CREDIT), reference, notes + **conditional** CASH tendered MoneyInput → live computed change due panel (emerald=ok, rose=insufficient).
+  - Submit button in GlobalModal footer uses `form="posPayForm"` attribute (no inline submit handler).
+- Submit fires `useCheckoutOrderMutation` with full body: items, tax, discount, payments array. Success: toast, clear cart state, optional `router.push /sales/orders/[newId]`.
+
+#### 10.5.2 Orders List `/sales/orders`
+- Toolbar filters: GlobalDatePicker pair (from/to, uses `date=` not `value=`), OrderStatus/PaymentStatus GlobalSelect, customer + warehouse selects, Clear when active.
+- 8-col GlobalTable: order# (mono badge), Customer avatar + name, Status Badge 8-tone, PaymentStatus Badge 6-tone, Total MoneyDisplay, Items count pill, DateDisplay, CreatedBy user pill, Actions (Eye → detail, XCircle mark CANCELLED gated sales.orders.update + ConfirmDialog, Trash2 destructive gated sales.orders.delete).
+
+#### 10.5.3 Order Detail `/sales/orders/[id]` — 3 Radix Tabs
+- `useParams<{id:string}>()` → `useGetOrderByIdQuery(id)`. PageHeader back to `/sales/orders`. Top Change Status GlobalSelect gated sales.orders.update.
+- 4-card KPI strip: Order Status badge / Total Paid / Due colorized.
+- **Tabs (A) Receipt (B) Payments (C) Refunds:**
+  - Receipt: Print-style invoice card with Print button, bill-to customer info, line-items GlobalTable totals footer card right-aligned Subtotal/Discount/Tax/Grand Total large.
+  - Payments: Table + Add sm button gated sales.payments.create → GlobalModal with date/method/amount/reference/notes.
+  - Refunds: Table + Issue destructive rose button → Refund GlobalModal with qty/amount/reason/restock Switch.
+
+#### 10.5.4 Payments Ledger `/sales/payments` — 7 cols
+Filters: 2 date, method, status, orderId search. Method badge 6 tones strict 6-fam no amber. Create Payment modal (append-only, no edit/delete). Cross link to order detail.
+
+#### 10.5.5 Refunds Ledger `/sales/refunds` — 7 cols
+Filters: 2 date, reason, orderId. Reason Badge 5 tones. Create Refund modal with orderId → orderItemId dependent select (loads items via useListOrderItemsByOrderId), restock Switch true default. Cross link order detail.
+
+#### 10.5.6 Reports Daily `/sales/reports` — ZERO Chart Lib Install (0 npm)
+Default date range = today (startOfDay/endOfDay date-fns). 2 Date picker + warehouse + "Today" reset.
+- 4 DashboardCard KPI: Total Orders (sky Receipt), Total Revenue (emerald $), Avg Order Value (violet ↑), Items Sold (teal Boxes).
+- Payment Method Breakdown card — 5 rows (method name / $ sum / % + CSS bar `style={{ width: \`${pct}%\` }}` with method-family color, h-2.5 rounded. NO recharts/d3/dnd-kit (P5 Kanban click-move vs drag-drop lesson re-used → pure CSS bar not chart lib).
+- Top 10 Products table: rank (top3 emerald/sky/violet badges NO amber), sku+name, qty, revenue.
+
+#### 10.5.7 Credits MVP `/sales/credits` — 6 cols
+customerCode mono, customer avatar/name, creditBalance StatusBadge emerald pos/ slate zero/ rose neg, orderCount, totalSpent $, LastOrder DateDisplay. Top Adjust Credit modal PermissionGate sales.credits.adjust: customer select, deltaAmount GlobalInput with live Increase/Decrease pill preview, note textarea.
+
+### 10.6 Terminal Command Sequence Handoff (USER RUNS ALL, STOP ON FIRST ERROR)
+
+**PRE-REQ:** PostgreSQL service running (check services.msc → postgresql-x64-18 Running). Backend .env has valid DATABASE_URL pointing to business_suite DB.
+
+Run commands in EXACT order. Stop immediately if any command errors. Send first ERROR block to editor (batch bucketing A:imports B:enum C:relation-order D:prop-name E:tone). Round 1 → batch fix, Round 2 → exit 0.
+
+```powershell
+# ┌──────── COMMAND A: Backend regenerate Prisma client after schema augments
+cd "g:\MBW Projects\Other\BS\backend"
+npx prisma generate
+
+# ┌──────── COMMAND B: Apply DB migration PostgreSQL tables/enums (data-safe: creates new cols/tables, never drops existing)
+npx prisma migrate dev --name phase7_sales
+
+# ┌──────── COMMAND C: Upsert 13 sales permission codes × 7 tiers additive
+npx ts-node --transpile-only prisma/seed_phase7_sales.ts
+
+# ┌──────── COMMAND D: Backend TypeScript strict noEmit → exit 0 expected
+npx tsc --noEmit
+
+# ┌──────── COMMAND E: Frontend TypeScript strict noEmit → exit 0 expected
+cd ..\frontend
+npx tsc --noEmit
+
+# ┌──────── COMMAND F: Frontend full build optional (takes 2-3 min)
+npm run build
+
+# ┌──────── COMMAND G: Start dev servers (2 PowerShell tabs OR split)
+# Tab1 BACKEND:
+cd backend ; npm run dev     # http://localhost:5000  (API)
+# Tab2 FRONTEND:
+cd frontend ; npm run dev    # http://localhost:3000  (UI)
+```
+
+### 10.7 11 BROWSER SMOKE TEST GATES (Login admin@example.com / Admin@123)
+
+Run after G succeeds. Each gate PASS/FAIL verbal reply. If FAIL → return exact Network tab payload + browser console first error.
+
+```
+GATE 1 P7-10: Sales drawer links render (6 items: POS / Orders / Payments / Refunds / Reports / Credits)
+→ Click → Quick Sale POS page loads, no 500, products list visible
+
+GATE 2 P7-11: Checkout Cola × 2 @ $1.20 ea = $2.40. Payment = CASH, Tendered $5.00
+→ Change due = $2.60 displayed correctly.
+→ New order INV-0001 visible in Orders list.
+→ Inventory > Stock: Cola stock decreased = original minus 2
+→ Audit log > 3 new rows (ORDER_CREATE + PAYMENT_CREATE + STOCK_SALE)
+
+GATE 3 P7-12: Try Cola qty=9999 → Submit checkout
+→ Backend returns 422 BusinessRuleError insufficient stock
+→ Stock unchanged (rollback verified). No orphan INV-xxxx row created.
+
+GATE 4 P7-13: Orders list filters: set Status=PENDING PaymentStatus=UNPAID
+→ URL shows ?status=PENDING&paymentStatus=UNPAID&page=1&pageSize=20
+→ Browser Back button → returns correctly (no useEffect hydration loop)
+
+GATE 5 P7-14: OrderDetail INV-0001 → TAB Receipt shows items/qty/totals correct
+→ TAB Payments shows 1 Cash $5 recorded correctly with change due info
+
+GATE 6 P7-15: Refund test: in order INV-0001, Refund qty=1 Cola, Restock=TRUE, Reason DEFECTIVE
+→ New REF-0001 refund appended in Refunds ledger (append-only, no old edits)
+→ Inventory Stock: Cola qty increased by exactly 1
+
+GATE 7 P7-16: Payments/Refunds pages audit: NO YELLOW/AMBER/MUSTARD/GOLD/ORANGE bg/text classes visible ANYWHERE (screenshots if unsure). All status badges use only emerald/rose/slate/sky/violet/teal.
+
+GATE 8 P7-17: Reports page. Set Today default range → 4 DashboardCards show expected KPIs
+→ Method Breakdown shows CSS bars (horizontal width matching $ ratio)
+→ Top 10 Products table ranks top 3 badges colors only emerald/sky/violet
+
+GATE 9 P7-18: URL pagination/sort back button works on Orders / Payments / Refunds / Credits ALL 4 pages → back returns to previous filter state w/o full reload.
+
+GATE 10 P7-RBAC: Test 3 roles
+(a) Logout → CASHIER login cashier@example.com / Cashier@123
+    → Visible: POS only + Orders read + Payments create. Refund create button HIDDEN. Report credits buttons hidden. Correct (4 codes only).
+(b) Logout → VIEWER login viewer@example.com / Viewer@123
+    → Read-only Lists visible. Create/Delete/Refund ALL buttons HIDDEN. Correct (5 read-only codes).
+(c) Logout → ADMIN back in. All buttons visible back. Correct.
+```
+
+### 10.8 Git Commit After All 11 Gates USER-VERIFIED Pass
+
+```powershell
+cd "g:\MBW Projects\Other\BS"
+git status
+git add -A
+git commit -m "Phase 7 Sales/POS: 8 enums + Refund table + 5 backend modules 24 files + RTK 26 endpoints + 7 pages. 13 RBAC codes additive. Atomic 13-step checkout $tx + 5-step refund $tx append-only ledger. Pure CSS bars 0 installs. Strict 6-family tones no-yellow. 11 gates browser-verified pass. tsc 0 front/back."
+```
+
+**Concepts learned**: Prisma `$transaction` multi-step audit-bundled atomicity (13 steps in 1 tx), OrderItem snapshot copies denormalized price for old-invoice integrity, append-only ledger corrections pattern (no patch/delete → refund reversal), tagType static union TypeScript lesson (P6 error TS2322 avoided), negative stock double guard: service validation 422 BEFORE UPDATE + Postgres CHECK quantity>=0 parachute, customer credit non-negative Zod refine on adjust, cross-module RTK invalidation (checkout invalidates 6 tags together because stock/report/credits all change), paymentStatus 3%/97% ratio buckets, drawer priority by business workflow click-freq not alphabetical.
 
 ---
 
