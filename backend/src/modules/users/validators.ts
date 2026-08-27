@@ -11,7 +11,7 @@ export const CreateUserSchema = z.object({
   roleId: z.string().uuid(),
   phone: z.string().trim().max(30).optional().or(z.literal("")),
   avatarUrl: z.string().trim().max(500).optional().or(z.literal("")),
-});
+}).strict();
 export type CreateUserDto = z.infer<typeof CreateUserSchema>;
 
 export const UpdateUserSchema = z.object({
@@ -38,5 +38,5 @@ export const ChangeOwnPasswordSchema = z.object({
     message:
       "Password must be at least 8 characters with uppercase, lowercase, digit, and one special character.",
   }),
-});
+}).strict();
 export type ChangeOwnPasswordDto = z.infer<typeof ChangeOwnPasswordSchema>;

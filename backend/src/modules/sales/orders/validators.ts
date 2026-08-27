@@ -7,7 +7,7 @@ export const CreateOrderItemDto = z.object({
   quantity: z.coerce.number().int().min(1),
   discountAmount: z.coerce.number().gte(0).default(0),
   taxRatePercent: z.coerce.number().int().gte(0).lte(100).default(0),
-});
+}).strict();
 
 export const CreatePaymentDto = z.object({
   amount: z.coerce.number().gte(0),
@@ -15,7 +15,7 @@ export const CreatePaymentDto = z.object({
   reference: z.string().trim().optional(),
   notes: z.string().trim().optional(),
   transactionFee: z.coerce.number().gte(0).default(0),
-});
+}).strict();
 
 export const CreateOrderCheckoutDto = z.object({
   customerId: z.string().uuid().optional(),
@@ -26,13 +26,13 @@ export const CreateOrderCheckoutDto = z.object({
   referenceNo: z.string().trim().optional(),
   dueDate: z.coerce.date().optional(),
   payments: z.array(CreatePaymentDto).optional().default([]),
-});
+}).strict();
 export type CreateOrderCheckoutDto = z.infer<typeof CreateOrderCheckoutDto>;
 
 export const UpdateOrderStatusDto = z.object({
   status: z.nativeEnum(OrderStatus),
   notes: z.string().trim().optional(),
-});
+}).strict();
 export type UpdateOrderStatusDto = z.infer<typeof UpdateOrderStatusDto>;
 
 export const ListOrdersQuery = PaginationSchema.extend({
@@ -44,5 +44,5 @@ export const ListOrdersQuery = PaginationSchema.extend({
   orderDateFrom: z.coerce.date().optional(),
   orderDateTo: z.coerce.date().optional(),
   sortBy: z.enum(["orderNumber", "orderDate", "totalAmount", "status", "createdAt"]).optional(),
-});
+}).strip();
 export type ListOrdersQuery = z.infer<typeof ListOrdersQuery>;

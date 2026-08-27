@@ -39,6 +39,24 @@ export const ProductService = {
         skip,
         take,
         orderBy,
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          barcode: true,
+          unitPrice: true,
+          status: true,
+          createdAt: true,
+          category: { select: { id: true, name: true } },
+          stockLevels: {
+            select: {
+              quantity: true,
+              minimumLevel: true,
+              warehouse: { select: { id: true, name: true } },
+            },
+          },
+          createdBy: { select: { id: true, firstName: true, lastName: true } },
+        },
       }),
     ]);
 

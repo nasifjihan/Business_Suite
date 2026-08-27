@@ -25,7 +25,7 @@ export const CreateEmployeeSchema = z.object({
   emergencyRelation: z.string().trim().optional(),
   imageUrl: z.string().trim().optional(),
   notes: z.string().trim().optional(),
-});
+}).strict();
 export type CreateEmployeeDto = z.infer<typeof CreateEmployeeSchema>;
 
 export const UpdateEmployeeSchema = z.object({
@@ -51,7 +51,7 @@ export const UpdateEmployeeSchema = z.object({
   emergencyRelation: z.string().trim().optional(),
   imageUrl: z.string().trim().optional(),
   notes: z.string().trim().optional(),
-});
+}).strict();
 export type UpdateEmployeeDto = z.infer<typeof UpdateEmployeeSchema>;
 
 export const ListEmployeesSchema = PaginationSchema.extend({
@@ -62,5 +62,5 @@ export const ListEmployeesSchema = PaginationSchema.extend({
   isActive: z.coerce.boolean().optional(),
   employmentType: z.nativeEnum(EmploymentType).optional(),
   sortBy: z.enum(["employeeCode", "firstName", "lastName", "joiningDate", "status", "createdAt"]).optional(),
-});
+}).strip();
 export type ListEmployeesQuery = z.infer<typeof ListEmployeesSchema>;

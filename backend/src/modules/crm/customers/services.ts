@@ -40,6 +40,17 @@ export const CustomerService = {
         skip,
         take,
         orderBy,
+        select: {
+          id: true,
+          customerCode: true,
+          name: true,
+          companyName: true,
+          email: true,
+          phone: true,
+          status: true,
+          createdAt: true,
+          creator: { select: { id: true, firstName: true, lastName: true } },
+        },
       }),
     ]);
 

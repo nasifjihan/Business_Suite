@@ -7,6 +7,7 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { setupListeners } from "@reduxjs/toolkit/query/react";
 import { apiSlice } from "@/lib/api/apiSlice";
+import rtkToastMiddleware from "@/lib/api/rtkToastMiddleware";
 import authReducer from "@/store/slices/authSlice";
 
 export const makeStore = () =>
@@ -16,7 +17,7 @@ export const makeStore = () =>
       auth: authReducer,
     },
     middleware: (getDefaultMiddleware) =>
-      getDefaultMiddleware({ serializableCheck: false }).concat(apiSlice.middleware),
+      getDefaultMiddleware({ serializableCheck: false }).concat(apiSlice.middleware, rtkToastMiddleware),
     devTools: process.env.NODE_ENV !== "production",
   });
 

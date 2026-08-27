@@ -346,6 +346,7 @@ model AuditLog {
   @@index([entityId])
   @@index([action])
   @@index([createdAt])
+  @@index([createdAt, entityType, userId])
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -445,6 +446,7 @@ model Lead {
   @@index([assignedToId])
   @@index([createdBy])
   @@index([createdAt])
+  @@index([status, createdAt])
 }
 
 model LeadActivity {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
@@ -435,66 +435,74 @@ export default function DashboardIndexPage() {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <CardShell
-          title="Sales Trend"
-          subtitle={`Current period: ${periodBadge}`}
-          isLoading={trendLoading}
-        >
-          {salesTrendOption ? (
-            <div className="h-72">
-              <ReactECharts option={salesTrendOption} style={{ height: "100%" }} />
-            </div>
-          ) : (
-            <div className="h-72 flex items-center justify-center text-sm text-muted-foreground">
-              No data for this period
-            </div>
-          )}
-        </CardShell>
+        <Suspense fallback={<LoadingSkeleton count={4} />}>
+          <CardShell
+            title="Sales Trend"
+            subtitle={`Current period: ${periodBadge}`}
+            isLoading={trendLoading}
+          >
+            {salesTrendOption ? (
+              <div className="h-72">
+                <ReactECharts option={salesTrendOption} style={{ height: "100%" }} />
+              </div>
+            ) : (
+              <div className="h-72 flex items-center justify-center text-sm text-muted-foreground">
+                No data for this period
+              </div>
+            )}
+          </CardShell>
+        </Suspense>
 
-        <CardShell
-          title="Lead Pipeline"
-          subtitle="By status"
-          isLoading={leadPipelineLoading}
-        >
-          {(Array.isArray(leadPipeline) && leadPipeline.length > 0) ||
-          leadPipelineLoading ? (
-            <div className="h-72">
-              <ReactECharts option={leadPipelineOption} style={{ height: "100%" }} />
-            </div>
-          ) : (
-            <div className="h-72 flex items-center justify-center text-sm text-muted-foreground">
-              No lead data
-            </div>
-          )}
-        </CardShell>
+        <Suspense fallback={<LoadingSkeleton count={4} />}>
+          <CardShell
+            title="Lead Pipeline"
+            subtitle="By status"
+            isLoading={leadPipelineLoading}
+          >
+            {(Array.isArray(leadPipeline) && leadPipeline.length > 0) ||
+            leadPipelineLoading ? (
+              <div className="h-72">
+                <ReactECharts option={leadPipelineOption} style={{ height: "100%" }} />
+              </div>
+            ) : (
+              <div className="h-72 flex items-center justify-center text-sm text-muted-foreground">
+                No lead data
+              </div>
+            )}
+          </CardShell>
+        </Suspense>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
-        <CardShell
-          title="Top Products"
-          subtitle="By revenue"
-          isLoading={topProductsLoading}
-        >
-          {topProductsOption ? (
-            <div className="h-80">
-              <ReactECharts option={topProductsOption} style={{ height: "100%" }} />
-            </div>
-          ) : (
-            <div className="h-80 flex items-center justify-center text-sm text-muted-foreground">
-              No product data yet
-            </div>
-          )}
-        </CardShell>
+        <Suspense fallback={<LoadingSkeleton count={4} />}>
+          <CardShell
+            title="Top Products"
+            subtitle="By revenue"
+            isLoading={topProductsLoading}
+          >
+            {topProductsOption ? (
+              <div className="h-80">
+                <ReactECharts option={topProductsOption} style={{ height: "100%" }} />
+              </div>
+            ) : (
+              <div className="h-80 flex items-center justify-center text-sm text-muted-foreground">
+                No product data yet
+              </div>
+            )}
+          </CardShell>
+        </Suspense>
 
-        <CardShell
-          title="Attendance Summary"
-          subtitle="Today's breakdown"
-          isLoading={attendanceLoading}
-        >
-          <div className="h-80">
-            <ReactECharts option={attendanceOption} style={{ height: "100%" }} />
-          </div>
-        </CardShell>
+        <Suspense fallback={<LoadingSkeleton count={4} />}>
+          <CardShell
+            title="Attendance Summary"
+            subtitle="Today's breakdown"
+            isLoading={attendanceLoading}
+          >
+            <div className="h-80">
+              <ReactECharts option={attendanceOption} style={{ height: "100%" }} />
+            </div>
+          </CardShell>
+        </Suspense>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">

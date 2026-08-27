@@ -15,7 +15,7 @@ export const CreateCustomerSchema = z.object({
   notes: z.string().trim().max(2000).optional().or(z.literal("")),
   source: z.nativeEnum(LeadSource).optional().default(LeadSource.OTHER),
   status: z.nativeEnum(CustomerStatus).optional().default(CustomerStatus.ACTIVE),
-});
+}).strict();
 export type CreateCustomerDto = z.infer<typeof CreateCustomerSchema>;
 
 export const UpdateCustomerSchema = z.object({
@@ -31,12 +31,12 @@ export const UpdateCustomerSchema = z.object({
   notes: z.string().trim().max(2000).optional().or(z.literal("")),
   source: z.nativeEnum(LeadSource).optional(),
   status: z.nativeEnum(CustomerStatus).optional(),
-});
+}).strict();
 export type UpdateCustomerDto = z.infer<typeof UpdateCustomerSchema>;
 
 export const ListCustomersSchema = PaginationSchema.extend({
   status: z.nativeEnum(CustomerStatus).optional(),
   source: z.nativeEnum(LeadSource).optional(),
   sortBy: z.enum(["name", "status", "createdAt", "totalSpent"]).optional(),
-});
+}).strip();
 export type ListCustomersQuery = z.infer<typeof ListCustomersSchema>;

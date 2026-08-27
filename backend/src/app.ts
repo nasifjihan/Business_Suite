@@ -25,9 +25,19 @@ import { errorHandler } from "./middleware/errorHandler";
 import { apiV1Router } from "./routes";
 
 export function createApp() {
+  if (
+    process.env.NODE_ENV === 'production' &&
+    (!CONFIG.cors.frontendUrl || CONFIG.cors.frontendUrl.length === 0 || CONFIG.cors.frontendUrl === '*')
+  ) {
+    throw new Error(
+      'FRONTEND_URL env var must be set to single origin in production; "*" is forbidden. Server startup aborted.'
+    );
+  }
+
   const app = express();
 
   // 1. Security headers first (CSP tweaked for local Next.js inline styles from Tailwind)
+  const isProd = process.env.NODE_ENV === 'production';
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -35,7 +45,7 @@ export function createApp() {
           defaultSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", "data:", "https:"],
-          scriptSrc: ["'self'"],
+          scriptSrc: isProd ? ["'self'"] : ["'self'", "'unsafe-inline'"],
           connectSrc: ["'self'", CONFIG.cors.frontendUrl],
         },
       },

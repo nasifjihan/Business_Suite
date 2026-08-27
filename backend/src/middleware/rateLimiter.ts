@@ -30,3 +30,19 @@ export const authStrictLimiter = rateLimit({
   legacyHeaders: false,
   handler: defaultHandler,
 });
+
+export const authedLimiter = rateLimit({
+  windowMs: CONFIG.rateLimit.windowMs,
+  max: 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: defaultHandler,
+});
+
+export const crudLimiter = rateLimit({
+  windowMs: CONFIG.rateLimit.windowMs,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: defaultHandler,
+});

@@ -48,6 +48,7 @@ import {
   PermissionGate,
   useHasPermission,
 } from "@/components/auth/PermissionGate";
+import { GlobalToast } from "@/components/feedback/Toast";
 // Side-effect: register RTK endpoints for all business modules (injectEndpoints file-level side-effect must run)
 import "@/lib/api/dashboardEndpoints";
 import "@/lib/api/crmEndpoints";
@@ -816,6 +817,7 @@ export default function DashboardLayout({
         </header>
         <main className="flex-1 p-6 overflow-x-auto">{children}</main>
       </div>
+      <GlobalToast />
     </div>
   );
 }

@@ -20,8 +20,66 @@ export function errorHandler(
   err: unknown,
   _req: Request,
   res: Response,
-  _next: NextFunction
+  _next: NextFunction,
 ): void {
+  if (
+    err &&
+    typeof err === "object" &&
+    (err as any).constructor?.name === "PrismaClientKnownRequestError" &&
+    typeof (err as any).code === "string"
+  ) {
+    const code = (err as any).code as string;
+    let statusCode = StatusCodes.INTERNAL_SERVER_ERROR;
+    let message = "Database operation failed.";
+    let field = "field";
+
+    switch (code) {
+      case "P2002": {
+        const targets = Array.isArray((err as any).meta?.target)
+          ? ((err as any).meta.target as string[])
+          : [];
+        field = targets.length > 0 ? targets.join(", ") : "field";
+        statusCode = StatusCodes.CONFLICT;
+        message = `A record with this ${field} already exists. Please use a different value.`;
+        break;
+      }
+      case "P2003": {
+        const fkField =
+          typeof (err as any).meta?.field_name === "string"
+            ? (err as any).meta.field_name
+            : "related record";
+        statusCode = StatusCodes.BAD_REQUEST;
+        message = `Invalid reference: related record for ${fkField} does not exist.`;
+        break;
+      }
+      case "P2014": {
+        statusCode = StatusCodes.CONFLICT;
+        message =
+          "Cannot perform this operation because related records exist. Delete or reassign them first.";
+        break;
+      }
+      case "P2025": {
+        statusCode = StatusCodes.NOT_FOUND;
+        message = "Record not found or has been deleted.";
+        break;
+      }
+    }
+
+    if (CONFIG.nodeEnv === "development") {
+      logger.warn(`[Prisma ${code}] ${message}`, { meta: (err as any).meta });
+    } else {
+      logger.warn(`[Prisma ${code}] ${statusCode}`);
+    }
+
+    errorResponse(res, statusCode, {
+      code: toErrorCode(statusCode),
+      message,
+      details:
+        CONFIG.nodeEnv === "development" ? [{ rawCode: code }] : undefined,
+    });
+    return;
+  }
+
   // Catch ZodError if one slipped past validate() middleware
   if (err instanceof ZodError) {
     const details = err.issues.map((i) => ({
@@ -67,13 +125,21 @@ export function errorHandler(
 
 function toErrorCode(status: number): string {
   switch (status) {
-    case StatusCodes.BAD_REQUEST: return "BAD_REQUEST";
-    case StatusCodes.UNAUTHORIZED: return "UNAUTHORIZED";
-    case StatusCodes.FORBIDDEN: return "FORBIDDEN";
-    case StatusCodes.NOT_FOUND: return "NOT_FOUND";
-    case StatusCodes.CONFLICT: return "CONFLICT";
-    case StatusCodes.UNPROCESSABLE_ENTITY: return "VALIDATION_ERROR";
-    case StatusCodes.TOO_MANY_REQUESTS: return "TOO_MANY_REQUESTS";
-    default: return "HTTP_" + status;
+    case StatusCodes.BAD_REQUEST:
+      return "BAD_REQUEST";
+    case StatusCodes.UNAUTHORIZED:
+      return "UNAUTHORIZED";
+    case StatusCodes.FORBIDDEN:
+      return "FORBIDDEN";
+    case StatusCodes.NOT_FOUND:
+      return "NOT_FOUND";
+    case StatusCodes.CONFLICT:
+      return "CONFLICT";
+    case StatusCodes.UNPROCESSABLE_ENTITY:
+      return "VALIDATION_ERROR";
+    case StatusCodes.TOO_MANY_REQUESTS:
+      return "TOO_MANY_REQUESTS";
+    default:
+      return "HTTP_" + status;
   }
 }

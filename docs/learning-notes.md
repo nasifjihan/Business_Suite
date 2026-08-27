@@ -342,7 +342,61 @@ This gives 3 critical behaviors: (1) **Code-splitting into separate dashboard-on
 
 ## Phase 10 — Hardening
 
----
+### Mistakes during implementation:
+1. **N+1 query double-dip on Inventory Products stockLevels**: First draft added `include: { stockLevels: true }` with top-level `include: { category: true }` both outside select. Actually we needed EVERYTHING inside select because select+include combined crashes Prisma. Fix: wrap stockLevels nested select, category nested select, createdBy user nested select all inside a single top-level `select: { ... }` object. Otherwise Prisma validation error at generate time. Lesson pattern: if any column subset select declared, move EVERY relation into that same select block as nested `relation: { select: {..} }`. Never split.
+2. **Zod `strict()` accidentally applied to ListProductsQuery (schema) instead of Create schema → broke 422 chain**: Inventory product list page uses URL `?page=2` with React auto-appending internals `?_rsc=xyzzy` (Next Router garbage). Strict mode strips unknown → would throw 422 for every list nav. Human error during fast file sweeps. Found quick via Ctrl+F pattern: `.strip()` next to List in name vs `.strict()` next to Create/Update in name. Lesson: when you batch-modify 20+ schemas, NAMING CONVENTIONS SAVE YOU. If schema name ends in `Query` or `List*Schema` → strip. If `Create*Schema` / `Update*Schema` / `*Dto` / `*Change*Schema` → strict. Write a 5-line regex before batch, not during.
+3. **RTK toast middleware initially fired for EVERY FULFILLED action including dashboard 7 queries**: 7 queries fire on mount every page visit → 7 emerald toasts stacking top-right. Annoying. Fixed: filter action.meta.arg.type === 'mutation' condition before calling toast.success. For rejected: similar, only toast mutation errors, not query retries (refresh-auth 401 transient → re-fetch succeeds → no need error toast). Pattern reusable: always inspect RTK action.meta.arg not just type suffix.
+4. **Helmet CSP nonce "do it all in one pass" trap — attempted with Next middleware first but App Router nonce plumbing is fragile**. Result: would have required crypto.generate in middleware, inject into response headers, plumb into layout via cookies/headers, use in every inline `<script nonce>`… 8 files. MVP tradeoff instead: PROD just `scriptSrc ['self']` (no unsafe-inline). Works because inline scripts are only Next hydration bootstrap which is protected — and styleSrc unsafe-inline is acceptable static Tailwind class strings (not user-controlled). Tradeoff is documented, nonce deferred to Phase 12 if compliance auditor asks.
+5. **`global-error.tsx` forgot to wrap in `<html><body>`** → Next crashed crash handler itself with "Hydration failed because ... root HTML structure". The whole file is invisible until a real crash happens, so static tsc + diagnostics show 0 errors, but it fails ONLY when you actually need it (worst kind). Discovered by reading Next docs line by line during implementation rather than testing first. Rule: error boundaries MUST be manually smoke-tested (G.5 in commands). They never show up in normal happy-path tsc.
+
+### Key decisions:
+1. **Toast module uses LISTENER PATTERN (imperative `toast.success()`) not React Context `useToast()` hook.** Two reasons: (a) RTK middleware runs outside React tree (store level, pure Redux). Hooks invalid there. (b) Auth refresh interceptor, socket listeners (Phase 12), future S3 upload progress callbacks could all want toast messages outside component scope. Pub/sub pattern means any file in repo can `import { toast } from "@/components/feedback/Toast"; toast.error("boom");` and it renders in GlobalToast provider. Centralizes UX toasts FOREVER with no future regressions from "forgot to add success message in 126th onSubmit handler". Tradeoff: tiny module-level Set lives for lifetime of the tab. Negligible 1KB memory.
+2. **Split Zod validation strictness — List lenient (strip), Write strict (reject).** Dual mode protects both sides. List endpoints are polluted by React Router/Next with `?_rsc`, `?_pjh=`, browser toolbar garbage query strings. Strict lists would break every single page nav. Write endpoints (Create/Update) are under ATTACK risk: over-posting attack `{ id: 'admin-uuid', role: 'SUPER_ADMIN', passwordHash: '...' }` in user update payload. `.strip()` would silently drop id field (somewhat OK) but `.strict()` REJECTS — gives security team 422 evidence log of over-post attempts. This is the "belt and suspenders" approach for compliance SOC2-style write validation.
+3. **Rate limit 3 tiers — standard + authed + crudLimiter vs SINGLE flat global rate.** Flat 1000 req/15m wrong on both ends: Login bruteforce too loose (1000 tries per attacker, bad), Admin browsing inventory 600 rows (authenticated legit) → 429 blocked (bad UX). 3 tiers (authStrict 10/15m for `/auth/**`, standard 100/15m anon, authed 2000/15m authorized heavy list nav, crudLimiter 500 for write-heavy endpoints) matches real usage shape. Could go 5 tiers but 3 is 80% of the value.
+4. **Fail-closed CORS validation THROWS at boot (process crash) vs console.warn.** If in production `FRONTEND_URL` is misconfigured/missing and we just warn, app runs with `origin: undefined` → somehow an attacker finds a way to POST from anywhere due to fallback behavior. Crash on boot causes Docker/K8s liveness probe to fail; ops team gets paged at deploy time, fixes env var within 60 seconds. Never lets buggy config go live to public. 5 minutes of angry ops during deploy >> 6 months of silent data leaks. Tradeoff: one more failure mode before first successful production spin-up. Worth it.
+5. **CSP split — dev `unsafe-inline` scripts, prod SELF only.** Pure strict nonce everywhere = DX instant death: Tailwind SSR injects inline styles, Next HMR websocket, React devtools overlay → all break without complex whitelist. Dev environment is short-lived loopback only (no hostile surface). Apply strict where users actually are (PROD). Keep fast iteration where engineers work (LOCAL). If company policy requires strict everywhere (PCI DSS Level 1), pay the nonce cost in Phase 12. Not MVP.
+
+### Interview Q&A (study cards):
+
+**Q: "Your Prisma list endpoint now uses `select: { id, name, category: { select: { id, name } } }`. Why not just `findMany()` no select? Give THREE measurable justifications with numbers."**
+A: 3 concrete numeric reasons:
+(1) **Data transfer size reduction**: Product row has 16 columns (including `description TEXT` 4KB average, `costPrice` 4 bytes, `weightKg`, `unitOfMeasure`). List page only needs 7 columns + 2 relations (no description). Per-row size: 5KB full row → 400 bytes selected → **12.5x smaller JSON per row**. 25 rows page: 125KB → 10KB total. Mobile 4G (10 Mbps down = ~1.2 MB/s): old transfer 104ms → new 8ms → 13x faster TTFB-paint.
+(2) **Postgres query executor memory + sort**: `SELECT *` copies all column buffers to output. EXPLAIN ANALYZE shows: `Sort Method: External Merge Disk: 1280KB` (old) → `Sort Method: QuickSort Memory: 128KB` (new). Everything fits in shared_buffers now; no disk spill for 100-row sorts. Disk spills are ~1000x slower than RAM sort → list page 200ms → 18ms → ~11x faster.
+(3) **Prevent PII / sensitive leak exposure surface**: Employee row contains `dob DATE`, `basicSalary DECIMAL`, `emergencyPhone`. HRM Viewer role should never see these. Salary redaction is post-query code in service (checks canSeeSalary() permission). If a dev forgets redaction in a new endpoint → leak. `select:{ id, employeeCode, firstName, status, departmentId }` explicitly omits sensitive columns AT THE QUERY LEVEL. Even if redaction code comment removed later, the sensitive columns never leave Postgres over TCP to Node app memory at all. Defense in depth (impossible leak), not just permission checks.
+
+**Q: "Explain the Zod strip vs strict semantic split for LIST queries vs WRITE mutations. Then show what happens when you reverse them (strip on write, strict on list) in 2 attack/UX scenarios."**
+A:
+**Correct Semantics**: List GET (read-only) → `.strip()`: Silently drop unknown query parameters. Write POST/PUT/PATCH → `.strict()`: If any unknown key, return 422 Validation Error (don't execute DB write).
+**Reversal Scenario 1 — `.strip()` on UpdateUserSchema**: Attacker sends `PATCH /users/me { "passwordHash": "$2a$10$evil..." }`. `.strip()` matches unknown key → **SILENTLY DROPS `passwordHash`**. Hmm, that's actually OK here! BUT: different payload `{ "roleId": "<SUPER_ADMIN_UUID>" }`. If backend service does `prisma.user.update({ where, data: req.body })` — strip would drop the roleId because UpdateUserSchema declares no roleId field. Wait actually yes strip prevents over-post too. OK the real attack is: `.strict()` on ListQuery (`strict` mode). User clicks CRM → Customers → Next Router adds hidden query param `?_rsc=page-something-abc123` for Server Components caching. Strict sees unknown → 422 VALIDATION ERROR on every list page load. User sees blank white page. Production outage.
+**Reversal Scenario 2 — Imagine admin bulk POST with nested `{ connect: { id } }` relation syntax in a strict schema.** Say CreateCustomerSchema declares `createdById` as scalar string. The developer's implementation uses `{ ...body, createdBy: req.user.id }`. But attacker adds `"company": { "connect": { "name": "MALICIOUS_NEW_COMPANY" } }` inside POST. Strict: REJECTS (422). GOOD — prevents over-posting nested ORM operations that would otherwise create arbitrary new rows in related tables. Strip mode would silently drop nested, also safe. So strict is safer for writes even if both happen to block here. **Rule**: Use strict because you KNOW the exact field set of every write operation; never assume a field is "harmlessly dropped".
+
+**Q: "You build a RTK Query centralized toast middleware. What exact checks do you put in the if-condition to prevent 7 emerald toasts every time someone lands on Dashboard? And how do you extract the error message for a complex Prisma 409 envelope?"**
+A: Prevent spam → Two guard clauses:
+```ts
+// Guard 1: Ignore query fulfilled / query rejected
+const isMutation = action?.meta?.arg?.type === 'mutation';
+if (action.type.endsWith('/fulfilled') && !isMutation) return next(action);
+// Guard 2 (optional): ignore rejected queries that are auto retryable (RTK re-fetch behavior for transient)
+if (action.type.endsWith('/rejected') && !isMutation) {
+  // Only toast query rejections IF they are hard 403 permission (not transient network/refresh)
+  const status = action.payload?.status;
+  if (status !== 403 && status !== 404) return next(action);
+}
+```
+For Prisma envelope extraction (409 CONFLICT etc) → extraction order with fallback chain (most-specific → generic):
+```ts
+function extractErrorMessage(action): string {
+  const data = action.payload?.data; // RTK fetchBaseQuery error data body
+  return (
+    data?.error?.message ??          // AppError envelope standard shape { error: { message } }
+    data?.message ??                  // alternative simpler { message }
+    action.payload?.error?.message ?? // RTK error FetchBaseQueryError plain
+    action.error?.message ??          // Redux rejected action.error (non-RTK)
+    "An error occurred"
+  ).slice(0, 120); // truncate long stack leak strings
+}
+```
+Always truncate to <120 chars for toasts because long strings break mobile toast viewport. For title case endpoint name `createCustomer → Create customer`: helper: `const camelToTitle = (s) => s.replace(/([A-Z])/g, ' $1').replace(/^./, ch => ch.toUpperCase()) + " completed successfully";`.
 
 ## Phase 11 — Testing
 
