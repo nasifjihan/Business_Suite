@@ -143,12 +143,12 @@ function EmployeesPageContent() {
       search: searchParams?.get("search") ?? "",
       departmentId: searchParams?.get("departmentId") || undefined,
       designationId: searchParams?.get("designationId") || undefined,
-      employmentStatus:
+      status:
+        (searchParams?.get("status") as EmploymentStatus) ||
         (searchParams?.get("employmentStatus") as EmploymentStatus) ||
         undefined,
       employmentType:
-        (searchParams?.get("employmentType") as EmploymentType) ||
-        undefined,
+        (searchParams?.get("employmentType") as EmploymentType) || undefined,
       sortBy: searchParams?.get("sortBy") ?? "joiningDate",
       sortOrder: (searchParams?.get("sortOrder") as "asc" | "desc") ?? "desc",
     };
@@ -161,17 +161,17 @@ function EmployeesPageContent() {
   } = useListEmployeesQuery(filters, { refetchOnMountOrArgChange: true });
   const { data: deptsRes } = useListDepartmentsQuery({
     page: 1,
-    pageSize: 10000,
+    pageSize: 100,
     isActive: true,
   });
   const { data: desigsRes } = useListDesignationsQuery({
     page: 1,
-    pageSize: 10000,
+    pageSize: 100,
     isActive: true,
   });
   const { data: allEmployeesRes } = useListEmployeesQuery({
     page: 1,
-    pageSize: 10000,
+    pageSize: 100,
   });
 
   const employees =
@@ -325,26 +325,37 @@ function EmployeesPageContent() {
     mode: "onTouched",
   });
 
+  const firstDeptId = departments[0]?.id ?? "";
+  const firstDesigId = designations[0]?.id ?? "";
+
   useEffect(() => {
-    if (modal.kind === "edit") {
-      const e = modal.employee;
+    if (modal.kind === "edit" && modal.employee) {
+      const e = modal.employee as any;
+      const st: EmploymentStatus =
+        e.status ?? e.employmentStatus ?? "ACTIVE";
+      const et: EmploymentType =
+        e.employmentType ?? e.type ?? "FULL_TIME";
+      const bs = e.basicSalary ?? e.salary ?? 0;
       form.reset({
         firstName: e.firstName,
         lastName: e.lastName,
-        email: e.email,
-        phone: e.phone ?? "",
+        email: e.email ?? "",
+        phone: e.phone ?? e.mobile ?? "",
         dateOfBirth: e.dateOfBirth ?? "",
         address: e.address ?? "",
-        emergencyContactName: e.emergencyContactName ?? "",
-        emergencyContactPhone: e.emergencyContactPhone ?? "",
-        emergencyRelationship: e.emergencyRelationship ?? "",
+        emergencyContactName:
+          e.emergencyContactName ?? e.emergencyName ?? "",
+        emergencyContactPhone:
+          e.emergencyContactPhone ?? e.emergencyPhone ?? "",
+        emergencyRelationship:
+          e.emergencyRelationship ?? e.emergencyRelation ?? "",
         departmentId: e.departmentId,
         designationId: e.designationId,
         managerId: e.managerId ?? "",
-        employmentType: e.employmentType,
-        employmentStatus: e.employmentStatus,
+        employmentType: et,
+        employmentStatus: st,
         joiningDate: e.joiningDate,
-        salary: e.salary ? parseFloat(String(e.salary)) : 0,
+        salary: bs ? parseFloat(String(bs)) : 0,
       });
     } else if (modal.kind === "create") {
       form.reset({
@@ -357,8 +368,8 @@ function EmployeesPageContent() {
         emergencyContactName: "",
         emergencyContactPhone: "",
         emergencyRelationship: "",
-        departmentId: departments[0]?.id ?? "",
-        designationId: designations[0]?.id ?? "",
+        departmentId: firstDeptId,
+        designationId: firstDesigId,
         managerId: "",
         employmentType: "FULL_TIME",
         employmentStatus: "ACTIVE",
@@ -366,7 +377,8 @@ function EmployeesPageContent() {
         salary: 0,
       });
     }
-  }, [modal, form, departments, designations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal.kind, modal.kind === "edit" ? modal.employee.id : "__create__", firstDeptId, firstDesigId]);
 
   const closeModal = () => {
     setModal({ kind: "none" });
@@ -381,16 +393,16 @@ function EmployeesPageContent() {
       phone: v.phone || undefined,
       dateOfBirth: v.dateOfBirth || undefined,
       address: v.address || undefined,
-      emergencyContactName: v.emergencyContactName || undefined,
-      emergencyContactPhone: v.emergencyContactPhone || undefined,
-      emergencyRelationship: v.emergencyRelationship || undefined,
+      emergencyName: v.emergencyContactName || undefined,
+      emergencyPhone: v.emergencyContactPhone || undefined,
+      emergencyRelation: v.emergencyRelationship || undefined,
       departmentId: v.departmentId,
       designationId: v.designationId,
       managerId: v.managerId || undefined,
       employmentType: v.employmentType,
-      employmentStatus: v.employmentStatus,
+      status: v.employmentStatus,
       joiningDate: v.joiningDate,
-      salary: v.salary ? String(v.salary) : undefined,
+      basicSalary: v.salary ? String(v.salary) : undefined,
     });
     if ("data" in out && (out.data as any)?.success) {
       closeModal();
@@ -408,16 +420,16 @@ function EmployeesPageContent() {
         phone: v.phone || undefined,
         dateOfBirth: v.dateOfBirth || undefined,
         address: v.address || undefined,
-        emergencyContactName: v.emergencyContactName || undefined,
-        emergencyContactPhone: v.emergencyContactPhone || undefined,
-        emergencyRelationship: v.emergencyRelationship || undefined,
+        emergencyName: v.emergencyContactName || undefined,
+        emergencyPhone: v.emergencyContactPhone || undefined,
+        emergencyRelation: v.emergencyRelationship || undefined,
         departmentId: v.departmentId,
         designationId: v.designationId,
         managerId: v.managerId || undefined,
         employmentType: v.employmentType,
-        employmentStatus: v.employmentStatus,
+        status: v.employmentStatus,
         joiningDate: v.joiningDate,
-        salary: v.salary ? String(v.salary) : undefined,
+        basicSalary: v.salary ? String(v.salary) : undefined,
       },
     });
     if ("data" in out && (out.data as any)?.success) {
@@ -518,18 +530,37 @@ function EmployeesPageContent() {
         col.display({
           id: "employmentStatus",
           header: "Status",
-          cell: ({ row: { original: e } }) => (
-            <StatusBadge
-              tone={EMPLOYMENT_STATUS_TONE[e.employmentStatus]}
-              size="md"
-              dot={e.employmentStatus === "ACTIVE"}
-              label={e.employmentStatus
-                .charAt(0)
-                .concat(
-                  e.employmentStatus.slice(1).toLowerCase().replace("_", " ")
-                )}
-            />
-          ),
+          cell: ({ row: { original: e } }) => {
+            const statusVal: EmploymentStatus =
+              (e as any).status ??
+              (e as any).employmentStatus ??
+              "INACTIVE";
+            const tone = EMPLOYMENT_STATUS_TONE[statusVal] ?? "slate";
+            const label =
+              statusVal?.charAt?.(0)?.toUpperCase?.() ??
+              statusVal[0]?.toUpperCase?.() ??
+              statusVal;
+            return (
+              <StatusBadge
+                tone={tone}
+                size="md"
+                dot={statusVal === "ACTIVE"}
+                label={
+                  typeof statusVal === "string" && statusVal.length
+                    ? statusVal
+                        .charAt(0)
+                        .toUpperCase()
+                        .concat(
+                          statusVal
+                            .slice(1)
+                            .toLowerCase()
+                            .replaceAll("_", " ")
+                        )
+                    : String(statusVal)
+                }
+              />
+            );
+          },
         }),
         col.accessor("joiningDate" as any, {
           id: "joiningDate",
@@ -628,10 +659,10 @@ function EmployeesPageContent() {
               className="w-44"
             />
             <GlobalSelect
-              value={filters.employmentStatus ?? ""}
+              value={filters.status ?? ""}
               onChange={(v) =>
                 pushParams({
-                  employmentStatus: v === "" ? undefined : (v as any),
+                  status: v === "" ? undefined : (v as any),
                 })
               }
               options={employmentStatusOptions}
@@ -662,7 +693,7 @@ function EmployeesPageContent() {
         defaultSortBy="joiningDate"
         defaultSortOrder="desc"
         queryResult={{
-          data: (employeesRes as any)?.data ?? employeesRes,
+          data: employeesRes as any,
           isFetching,
         }}
         getRowId={(e) => e.id}

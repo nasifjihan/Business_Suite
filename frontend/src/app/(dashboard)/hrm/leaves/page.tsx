@@ -109,7 +109,7 @@ function LeavesPageContent() {
 
   const {
     data: employeesRes,
-  } = useListEmployeesQuery({ pageSize: 500, isActive: true });
+  } = useListEmployeesQuery({ pageSize: 100, isActive: true });
   const { data: leaveTypesRes } = useListLeaveTypesQuery({ pageSize: 100, isActive: true });
 
   const employees: EmployeeItem[] = employeesRes?.items ?? [];
@@ -251,10 +251,12 @@ function LeavesPageContent() {
     [startDate, endDate],
   );
 
+  const firstLeaveTypeId = leaveTypes[0]?.id ?? "";
+
   useEffect(() => {
     if (modal.kind === "create") {
       createForm.reset({
-        leaveTypeId: leaveTypes[0]?.id ?? "",
+        leaveTypeId: firstLeaveTypeId,
         startDate: "",
         endDate: "",
         reason: "",
@@ -262,7 +264,8 @@ function LeavesPageContent() {
     } else if (modal.kind === "reject") {
       rejectForm.reset({ rejectionNote: "" });
     }
-  }, [modal, createForm, rejectForm, leaveTypes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal.kind, modal.kind === "reject" ? "__reject__" : "__create__", firstLeaveTypeId]);
 
   const onSubmitCreate = async (v: CreateLeaveFormValues) => {
     const totalDays = calculateWeekdays(v.startDate, v.endDate);

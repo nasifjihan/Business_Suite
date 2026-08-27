@@ -124,11 +124,11 @@ export const hrmEndpoints = apiSlice.injectEndpoints({
       query: (id) => `${HRM_URL_PREFIX}/departments/${id}`,
       providesTags: (r, e, id) => [{ type: "Departments", id }],
     }),
-    createDepartment: builder.mutation<DepartmentItem, Partial<DepartmentItem>>({
+    createDepartment: builder.mutation<DepartmentItem, Record<string, any>>({
       query: (body) => ({ url: `${HRM_URL_PREFIX}/departments`, method: "POST", body }),
       invalidatesTags: [{ type: "Departments", id: "LIST" }, { type: "Employees" }],
     }),
-    updateDepartment: builder.mutation<DepartmentItem, { id: string; body: Partial<DepartmentItem> }>({
+    updateDepartment: builder.mutation<DepartmentItem, { id: string; body: Record<string, any> }>({
       query: ({ id, body }) => ({ url: `${HRM_URL_PREFIX}/departments/${id}`, method: "PATCH", body }),
       invalidatesTags: (r, e, { id }) => [
         { type: "Departments", id: "LIST" },
@@ -145,11 +145,11 @@ export const hrmEndpoints = apiSlice.injectEndpoints({
       query: (params) => ({ url: `${HRM_URL_PREFIX}/designations`, params }),
       providesTags: [{ type: "Designations", id: "LIST" }],
     }),
-    createDesignation: builder.mutation<DesignationItem, Partial<DesignationItem>>({
+    createDesignation: builder.mutation<DesignationItem, Record<string, any>>({
       query: (body) => ({ url: `${HRM_URL_PREFIX}/designations`, method: "POST", body }),
       invalidatesTags: [{ type: "Designations", id: "LIST" }],
     }),
-    updateDesignation: builder.mutation<DesignationItem, { id: string; body: Partial<DesignationItem> }>({
+    updateDesignation: builder.mutation<DesignationItem, { id: string; body: Record<string, any> }>({
       query: ({ id, body }) => ({ url: `${HRM_URL_PREFIX}/designations/${id}`, method: "PATCH", body }),
       invalidatesTags: (r, e, { id }) => [
         { type: "Designations", id: "LIST" },
@@ -170,7 +170,7 @@ export const hrmEndpoints = apiSlice.injectEndpoints({
       query: (id) => `${HRM_URL_PREFIX}/employees/${id}`,
       providesTags: (r, e, id) => [{ type: "Employees", id }],
     }),
-    createEmployee: builder.mutation<EmployeeItem, Partial<EmployeeItem>>({
+    createEmployee: builder.mutation<EmployeeItem, Record<string, any>>({
       query: (body) => ({ url: `${HRM_URL_PREFIX}/employees`, method: "POST", body }),
       invalidatesTags: [
         { type: "Employees", id: "LIST" },
@@ -178,7 +178,7 @@ export const hrmEndpoints = apiSlice.injectEndpoints({
         { type: "HRReports", id: "SUMMARY" },
       ],
     }),
-    updateEmployee: builder.mutation<EmployeeItem, { id: string; body: Partial<EmployeeItem> }>({
+    updateEmployee: builder.mutation<EmployeeItem, { id: string; body: Record<string, any> }>({
       query: ({ id, body }) => ({ url: `${HRM_URL_PREFIX}/employees/${id}`, method: "PATCH", body }),
       invalidatesTags: (r, e, { id }) => [
         { type: "Employees", id: "LIST" },

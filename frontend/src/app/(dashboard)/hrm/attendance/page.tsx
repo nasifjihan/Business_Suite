@@ -122,7 +122,7 @@ function AttendancePageContent() {
     isFetching,
     refetch,
   } = useListAttendanceQuery(filters, { refetchOnMountOrArgChange: true });
-  const { data: employeesRes } = useListEmployeesQuery({ pageSize: 500, isActive: true });
+  const { data: employeesRes } = useListEmployeesQuery({ pageSize: 100, isActive: true });
 
   const attendanceItems = attendanceRes?.items ?? [];
   const meta = attendanceRes?.meta;

@@ -59,6 +59,7 @@ export const ListEmployeesSchema = PaginationSchema.extend({
   departmentId: z.string().uuid().optional(),
   designationId: z.string().uuid().optional(),
   status: z.nativeEnum(EmployeeStatus).optional(),
+  isActive: z.coerce.boolean().optional(),
   employmentType: z.nativeEnum(EmploymentType).optional(),
   sortBy: z.enum(["employeeCode", "firstName", "lastName", "joiningDate", "status", "createdAt"]).optional(),
 });

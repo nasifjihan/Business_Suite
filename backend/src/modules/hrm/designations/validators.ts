@@ -20,5 +20,6 @@ export type UpdateDesignationDto = z.infer<typeof UpdateDesignationSchema>;
 export const ListDesignationsSchema = PaginationSchema.extend({
   search: z.string().trim().max(100).optional(),
   departmentId: z.string().uuid().optional(),
+  isActive: z.coerce.boolean().optional(),
 });
 export type ListDesignationsQuery = z.infer<typeof ListDesignationsSchema>;

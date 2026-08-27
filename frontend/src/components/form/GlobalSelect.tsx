@@ -101,10 +101,8 @@ export const GlobalSelect = forwardRef<HTMLButtonElement, GlobalSelectProps>(
               error && "border-rose-400 focus:ring-rose-400"
             )}
           >
-            <SelectPrimitive.Value placeholder={placeholder} asChild>
-              <span className={cn(!value && "text-muted-foreground/60")}>
-                {value ? labelMap.get(value) : placeholder}
-              </span>
+            <SelectPrimitive.Value placeholder={placeholder} className={cn(!value && "text-muted-foreground/60")}>
+              {value ? labelMap.get(value) : placeholder}
             </SelectPrimitive.Value>
             <SelectPrimitive.Icon asChild>
               <ChevronDown className="w-4 h-4 text-slate-400 opacity-80" />

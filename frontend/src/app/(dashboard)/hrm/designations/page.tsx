@@ -78,12 +78,12 @@ function DesignationsPageContent() {
   } = useListDesignationsQuery(filters, { refetchOnMountOrArgChange: true });
   const { data: deptsRes } = useListDepartmentsQuery({
     page: 1,
-    pageSize: 10000,
+    pageSize: 100,
     isActive: true,
   });
   const { data: employeesRes } = useListEmployeesQuery({
     page: 1,
-    pageSize: 10000,
+    pageSize: 100,
   });
 
   const designations =
@@ -180,6 +180,7 @@ function DesignationsPageContent() {
     mode: "onTouched",
   });
 
+  const firstDeptId = departments[0]?.id ?? "";
   useEffect(() => {
     if (modal.kind === "edit") {
       form.reset({
@@ -193,12 +194,13 @@ function DesignationsPageContent() {
       form.reset({
         code: "",
         name: "",
-        departmentId: departments[0]?.id ?? "",
+        departmentId: firstDeptId,
         description: "",
         isActive: true,
       });
     }
-  }, [modal, form, departments]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal.kind, modal.kind === "edit" ? modal.designation.id : "__create__", firstDeptId]);
 
   const closeModal = () => {
     setModal({ kind: "none" });
@@ -422,7 +424,7 @@ function DesignationsPageContent() {
         defaultSortBy="createdAt"
         defaultSortOrder="desc"
         queryResult={{
-          data: (desigsRes as any)?.data ?? desigsRes,
+          data: desigsRes as any,
           isFetching,
         }}
         getRowId={(d) => d.id}

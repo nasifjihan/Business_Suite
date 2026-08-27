@@ -77,11 +77,11 @@ function DepartmentsPageContent() {
   } = useListDepartmentsQuery(filters, { refetchOnMountOrArgChange: true });
   const { data: employeesRes } = useListEmployeesQuery({
     page: 1,
-    pageSize: 10000,
+    pageSize: 100,
   });
   const { data: usersRes } = useListUsersQuery({
     page: 1,
-    pageSize: 10000,
+    pageSize: 100,
     status: "ACTIVE",
   });
 
@@ -412,7 +412,7 @@ function DepartmentsPageContent() {
         defaultSortBy="createdAt"
         defaultSortOrder="desc"
         queryResult={{
-          data: (deptsRes as any)?.data ?? deptsRes,
+          data: deptsRes as any,
           isFetching,
         }}
         getRowId={(d) => d.id}

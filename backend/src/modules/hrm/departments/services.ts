@@ -25,6 +25,8 @@ export const DepartmentService = {
     }
     if (q.status !== undefined) {
       where.status = q.status;
+    } else if (q.isActive !== undefined) {
+      where.status = q.isActive ? "ACTIVE" : "INACTIVE";
     }
 
     const orderBy: Record<string, unknown> = q.sortBy

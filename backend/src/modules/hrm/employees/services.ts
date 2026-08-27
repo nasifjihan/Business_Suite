@@ -40,6 +40,7 @@ export const EmployeeService = {
     if (q.departmentId) where.departmentId = q.departmentId;
     if (q.designationId) where.designationId = q.designationId;
     if (q.status) where.status = q.status;
+    else if (q.isActive !== undefined) where.status = q.isActive ? "ACTIVE" : "TERMINATED";
     if (q.employmentType) where.employmentType = q.employmentType;
 
     const orderBy: Record<string, unknown> = q.sortBy

@@ -23,5 +23,6 @@ export type UpdateDepartmentDto = z.infer<typeof UpdateDepartmentSchema>;
 export const ListDepartmentsSchema = PaginationSchema.extend({
   search: z.string().trim().max(100).optional(),
   status: z.nativeEnum(UserStatus).optional(),
+  isActive: z.coerce.boolean().optional(),
 });
 export type ListDepartmentsQuery = z.infer<typeof ListDepartmentsSchema>;
