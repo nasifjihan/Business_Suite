@@ -49,6 +49,7 @@ import {
   useHasPermission,
 } from "@/components/auth/PermissionGate";
 // Side-effect: register RTK endpoints for all business modules (injectEndpoints file-level side-effect must run)
+import "@/lib/api/dashboardEndpoints";
 import "@/lib/api/crmEndpoints";
 import "@/lib/api/inventoryEndpoints";
 import "@/lib/api/salesEndpoints";

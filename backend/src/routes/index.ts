@@ -22,6 +22,7 @@ import { crmRouter } from "../modules/crm/routes";
 import { inventoryRouter } from "../modules/inventory/routes";
 import { salesRouter } from "../modules/sales/routes";
 import { hrmRouter } from "../modules/hrm/routes";
+import { dashboardRouter } from "../modules/dashboard/routes";
 
 const apiV1Router = Router();
 
@@ -38,6 +39,7 @@ apiV1Router.use("/crm", crmRouter);
 apiV1Router.use("/inventory", inventoryRouter);
 apiV1Router.use("/sales", salesRouter);
 apiV1Router.use("/hrm", hrmRouter);
+apiV1Router.use("/dashboard", dashboardRouter);
 
 // Phase 7+: /orders, /invoices, /payments
 // Phase 8+: /employees, /attendance, /leaves

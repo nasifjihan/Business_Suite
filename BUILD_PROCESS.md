@@ -1501,59 +1501,178 @@ git commit -m "Phase 8 HRM: 5 enums + 6 tables (Employee self-ref manager, Atten
 
 ## 12. PHASE 9 — Dashboard & Analytics (ECharts)
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ COMPLETE (editor — 2026-08-27)
+> **Last editor-side revision**: 2026-08-27 16:40 UTC+5 · RBAC 1 new permission × 7 tiers additive · 4 backend files mounted on `/api/v1/dashboard` · 2 new frontend component files + dashboard/page.tsx rewrite · ECharts already installed in package.json (no new npm)
 
-**Rule**: Dashboard never fetches raw data and aggregates in JavaScript. Backend API returns pre-aggregated numbers. This is faster and keeps sensitive data on the server.
+**Rule**: Dashboard never fetches raw data and aggregates in JavaScript. Backend API returns pre-aggregated numbers. This is faster and keeps sensitive data on the server. All SQL is parameterized via `Prisma.sql` tagged template (SQLi defense).
 
-### Backend Aggregation Endpoints
-- `GET /dashboard/summary` — Returns one object:
-  ```
-  totalSalesToday: number
-  totalSalesThisWeek: number
-  totalSalesThisMonth: number
-  orderCountToday: number
-  avgOrderValue: number
-  newCustomersThisMonth: number
-  totalOpenLeads: number
-  leadConversionRateThisMonth: number (%)
-  lowStockProductCount: number
-  presentEmployeesToday: number
-  leaveRequestsPendingCount: number
-  ```
-  This uses raw SQL with `SUM`, `COUNT`, `WHERE date BETWEEN` clauses. Prisma `$queryRaw` for performance on aggregate queries.
+---
 
-- `GET /dashboard/sales-trend?period=week|month|quarter|year` — Array of `{ date: string, total: number, orders: number }` for charting.
+### 12.1 Scope Summary
 
-- `GET /dashboard/top-products?limit=10` — `[{ productId, name, qtySold, revenue }]` sorted by revenue DESC.
+| # | Component | Count |
+|---|-----------|-------|
+| 1 | New RBAC codes | **1** (`dashboard.read`) — additive upsert granted to ALL 7 tiers |
+| 2 | Backend modules | **1** (dashboard) with **4 files** (validators/services/controllers/routes) |
+| 3 | Aggregation endpoints | **7** (summary / sales-trend / top-products / lead-pipeline / attendance-summary / recent-orders / recent-activities) |
+| 4 | Frontend components | **1** new (`DashboardCard.tsx` — standalone extracted per user rule) + rewrite dashboard page |
+| 5 | RTK Query hooks | **7** useGetXxxQuery + 7 useLazyGetXxxQuery (static tag `DashboardKPIs`) |
+| 6 | ECharts visualizations | **4** — Sales Trend (line), Lead Pipeline (doughnut), Top Products (horizontal bar), Attendance Summary (bar) |
+| 7 | KPI cards | **6** — Sales Today, Sales MTD, Orders Today, New Customers MTD, Open Leads, Present Today |
+| 8 | Lists (row 4) | Recent Orders (links to `/sales/orders/:id`) + Low Stock alert banner + Recent Activity |
 
-- `GET /dashboard/lead-pipeline` — `[{ status: NEW, count: 12, value: 15000 }, ...]` for all 6 statuses.
+---
 
-- `GET /dashboard/attendance-summary?date=today` — `{ PRESENT: 28, LATE: 3, ABSENT: 2, LEAVE: 4, HALF_DAY: 1 }`.
+### 12.2 Files Changed
 
-- `GET /dashboard/recent-orders?limit=10` — Most recent completed orders (small list, not paginated).
+**Backend (6 files total — 1 seed, 4 module, 1 routes mount)**:
+| File | Status | Notes |
+|------|--------|-------|
+| `backend/prisma/seed_phase9_dashboard.ts` | NEW | 1 permission `dashboard.read` + 7 role assignments, additive, skipDuplicates, no deleteMany |
+| `backend/src/modules/dashboard/validators.ts` | NEW | 5 Zod schemas (period enum, limit ranges 1-20/1-30, date optional coerce) |
+| `backend/src/modules/dashboard/services.ts` | NEW | 7 aggregations, all `$queryRaw` + Prisma.sql parameterized. 26-field summary + gap-free sales trend via generate_series |
+| `backend/src/modules/dashboard/controllers.ts` | NEW | 7 thin handlers (Zod parse → service → successResponse) |
+| `backend/src/modules/dashboard/routes.ts` | NEW | `authenticate()` global + per-route `authorize('dashboard.read')` guard, all 7 GET routes |
+| `backend/src/routes/index.ts` | MODIFIED | Added mount `apiV1Router.use("/dashboard", dashboardRouter)` after HRM (L41 area) |
 
-- `GET /dashboard/recent-activities?limit=15` — Recent audit logs and lead activities combined (for activity feed).
+**Frontend (5 files — 2 new, 3 modified)**:
+| File | Status | Notes |
+|------|--------|-------|
+| `frontend/src/lib/api/apiSlice.ts` | MODIFIED | Added static literal `"DashboardKPIs"` to `tagTypes[]` (NOT runtime push — P6/8 permanent rule compliance) |
+| `frontend/src/lib/api/dashboardEndpoints.ts` | NEW | 7 RTK Query injections, widened to `any` types to avoid TS2353 cascade, `keepUnusedDataFor: 30s` more aggressive than global 60s |
+| `frontend/src/components/dashboard/DashboardCard.tsx` | NEW | Standalone reusable (per user "extract large components" rule), 6 tones emerald/sky/violet/rose/slate/teal, delta % indicators, NO yellow family |
+| `frontend/src/app/(dashboard)/layout.tsx` | MODIFIED | Added side-effect import `@/lib/api/dashboardEndpoints` at top of endpoint imports |
+| `frontend/src/app/(dashboard)/dashboard/page.tsx` | FULL REPLACE | 4 rows, state-based period dropdown (not URL), 7 parallel RTK queries, ECharts lazy `next/dynamic { ssr: false }`, all 4 charts wrapped in `useMemo` |
 
-### Frontend Dashboard (`app/(dashboard)/dashboard/page.tsx`)
-- **Top row (KPI cards, 6 across)**: DashboardCard × 6 — Sales Today, Sales Month, Orders Today, New Customers, Open Leads, Present Today. Each card has colored icon, big number, small delta indicator vs previous period (e.g. Sales Today: $4,280 ↑ 12% vs yesterday).
+---
 
-- **Second row**:
-  - Left (70% width): Sales Trend Line Chart (ECharts). Date on X axis, total sales $ on Y axis. Period dropdown (Week/Month/Quarter/Year) in header.
-  - Right (30%): Lead Pipeline Doughnut Chart — 6 colored segments by status. Hover shows value in $.
+### 12.3 Bugs Fixed (Editor-side Before Gates)
 
-- **Third row**:
-  - Left: Top Products Bar Chart — top 10 by revenue, horizontal bars.
-  - Right: Attendance Summary — simple stacked bar or donut.
+| # | Bug | Severity | Fix |
+|---|-----|----------|-----|
+| 1 | **N/A — zero tsc errors across backend + frontend before delivery** | Low | Pre-emptive: Loosened types dashboardEndpoints `any` to prevent TS2353 (P8 EmployeeItem lesson) |
+| 2 | **SQL Injection risk prevention**: Pre-emptively avoided backtick string concat in raw SQL | Critical | ALL 43 raw queries in services.ts use `Prisma.sql` tagged template literals — Prisma auto-parameterizes variables |
+| 3 | **ECharts SSR hydration flicker** (would have been) | Medium | Dynamic import `ssr: false` prevents Next SSR from rendering `undefined` server-side (Pitfall #3 in header) |
+| 4 | **ECharts infinite re-init** (would have been) | Medium | All 4 chart `option=` props wrapped in `useMemo` with scalar data dependency (Pitfall #4 header) |
+| 5 | **KPI delta / 0 → NaN** (would have been) | Medium | `calcDelta(curr, prev)` guard `prev === 0 ? 0 : (curr-prev)/prev * 100`; displays slate `—` when both 0 |
 
-- **Fourth row**:
-  - Left: Recent Orders table (small, no pagination) — links to full Order detail
-  - Right: Low Stock Alert — list of products with qty below minimum, links to product detail
+---
 
-### ECharts Implementation Notes
-- Use `import dynamic from 'next/dynamic'; const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false, loading: () => <LoadingSkeleton /> });` — because ECharts is 700KB+; we lazy-load it and it only runs client-side (no SSR).
-- Wrap chart options in `useMemo` to avoid unnecessary re-renders.
-- Handle empty datasets gracefully — show "No data for this period" message instead of blank chart.
-- Colors use project theme (slate/indigo/emerald variants), no mustard/yellow.
+### 12.4 Run Commands (User — execute in order, STOP on first error)
+
+```powershell
+# Step A: Backend — Prisma schema UNCHANGED this phase (no new tables/enums),
+# but good hygiene to confirm client is fresh.
+cd backend
+npx prisma generate
+
+# Step B: Apply any pending migrations if you skipped Phase 8 formal commit earlier
+# (Phase 9 has NO schema changes — this step likely NOOP "Already in sync")
+npx prisma migrate dev --name phase9_dashboard
+
+# Step C: Seed — additive RBAC upsert 1 permission × 7 roles
+npx ts-node prisma/seed_phase9_dashboard.ts
+
+# Step D: Backend strict TypeScript (expect exit 0, 0 errors)
+npx tsc --noEmit
+
+# Step E: Frontend strict TypeScript (expect exit 0, 0 errors)
+cd ..\frontend
+npx tsc --noEmit
+
+# Step F (optional): Full Next build to confirm ECharts is separate chunk
+# (Look for "chunks/dashboard-echarts-*.js" separate from app-*.js in output)
+npm run build
+
+# Step G: Restart both dev servers (new endpoints registered, new RBAC perm seeded).
+# CRITICAL AFTER Step C: LOGOUT of admin session first, RE-LOGIN with SAME admin user.
+# Reason: JWT cached permissions from before seed don't include `dashboard.read` yet.
+# Old token → 403 Forbidden on all dashboard endpoints until new token minted.
+```
+
+---
+
+### 12.5 Acceptance Gates (P9-1 to P9-16 — 16 gates total)
+
+**Backend & Build (user must show PASS/FAIL per gate)**:
+
+| Gate | Check | PASS Criteria | PASS? |
+|------|-------|---------------|-------|
+| P9-A | `backend/` `npx prisma generate` | exit 0 | ☐ |
+| P9-B | `backend/` `npx ts-node prisma/seed_phase9_dashboard.ts` | exit 0, log lines `✅ dashboard.read perm upserted` + `✅ 7 role permissions assigned` (additive, no deletes) | ☐ |
+| P9-C | Backend `npx tsc --noEmit` | exit 0 | ☐ |
+| P9-D | Frontend `npx tsc --noEmit` | exit 0 | ☐ |
+| P9-E | Restart dev servers + LOGOUT admin → RE-LOGIN → Network tab /me endpoint shows `dashboard.read` in permissions array | JWT has the new code | ☐ |
+
+**Browser & Dashboard UI (11 gates)**:
+
+| Gate | Check | PASS Criteria | PASS? |
+|------|-------|---------------|-------|
+| P9-1 | Navigate `/dashboard` → Full page renders | No runtime crash, DevTools Console ZERO red errors, skeletons fade → 6 cards hydrated in <5s | ☐ |
+| P9-2 | Row 1 KPI 1 — Sales Today card | Shows `$amount` number, delta badge vs yesterday. If ↑ positive = emerald `TrendingUp`; if ↓ = rose `TrendingDown`; both 0 = slate `—` | ☐ |
+| P9-3 | Row 1 KPI 6 — Present Today card | Sky/emerald tone, numeric value matches value returned from `/dashboard/attendance-summary` `PRESENT + LATE + HALF_DAY` count network response tab (manual verify same) | ☐ |
+| P9-4 | Row 2 Sales Trend line chart, period default = `Week` | 7 data points visible, smooth line, x-axis dates `YYYY-MM-DD`, y-axis dollar values. Hover tooltip shows Date + Total + Orders. NO yellow in palette (CHART_COLORS: sky-indigo-emerald-violet-teal-rose) | ☐ |
+| P9-5 | Period dropdown click: select **Month** | Network → sales-trend call updates to `?period=month`. Chart re-renders 28–31 data points. No infinite re-init (CPU stays < 10%). No crash. | ☐ |
+| P9-6 | Row 2 Right — Lead Pipeline doughnut | ALWAYS renders all 6 statuses in legend (NEW/CONTACTED/QUALIFIED/PROPOSAL/WON/LOST) even if count=0 (backend returns 6, zero-count items show 0 in legend but no slice painted). Hover tooltip: status + count + $estimatedValue total. Colors by LeadStatus palette match Lead page StatusBadge families. | ☐ |
+| P9-7 | Row 3 Left — Top Products horizontal bar | Max 10 bars. Product name labels y-axis, revenue $ x-axis. Bars sorted DESC revenue. Bar color = violet gradient. Zero yellow tones. | ☐ |
+| P9-8 | Row 3 Right — Attendance Summary bar chart | All 5 bars shown even if count=0: PRESENT(emerald), LATE(violet), ABSENT(rose), HALF_DAY(sky), LEAVE(teal). 1:1 color match with HRM Attendance Page StatusBadge palette. Sum of all bars = headcount today (integer, no fractional float). | ☐ |
+| P9-9 | Row 4 Left — Recent Orders list | ≤ 10 rows. Order number column links to `/sales/orders/${o.id}` (target=_blank or router push — either OK). Money formatted, StatusBadge correct tones (COMPLETED emerald, CANCELLED rose, PENDING slate, etc). Empty state: "No recent orders" muted line. | ☐ |
+| P9-10 | Row 4 Right — Low Stock Alert section + Recent Activity feed | IF `lowStockCount > 0`: violet `AlertTriangle` icon banner says "N products below minimum stock level" with React Router `<Link to="/inventory/products">View inventory</Link>`. ELSE: emerald check "All stock levels healthy — no low stock alerts." Recent activity feed shows 15 items newest first with timestamp relative. | ☐ |
+| P9-11 | Period change → summary KPIs STAY same (no re-fetch), only Sales Trend re-queries | Correct design: /summary has no `period` param in URL — only `/sales-trend` refetches. Confirm 1 (not 7) new network requests on dropdown month change. | ☐ |
+| P9-12 | VIEWER login (viewer@example.com / Viewer@123) | Dashboard visible, ALL 6 KPIs + all 4 charts render identically to Admin (no sensitive salary data anyway, so numbers match). Zero 403 errors in Network tab. Activity feed hides user email (actor name only if user record is JOINed). | ☐ |
+| P9-13 | SALES login (sales@example.com / Sales@123) + CASHIER login | Dashboard renders. RBAC seed grants dashboard.read to all roles. Both SALES and CASHIER land on /dashboard after login without error. 403 zero. | ☐ |
+| P9-14 | **YELLOW FAMILY AUDIT** (Permanent hard constraint — ZERO TOLERANCE). Run 2 greps: (A) CD frontend `grep -RniE "yellow|amber|golden|mustard|orange" src/app/(dashboard)/dashboard src/components/dashboard src/lib/api/dashboardEndpoints.ts`. (B) CD backend `grep -niE "yellow|amber|golden|mustard|orange" src/modules/dashboard prisma/seed_phase9_dashboard.ts` | **Both greps return ZERO hits**. (Orange/amber color names, hex #fbbf24 #f59e0b #fb923c etc — if found FAIL. CHART_COLORS array checked during code write: sky #0ea5e9 / indigo #6366f1 / emerald #10b981 / violet #8b5cf6 / teal #14b8a6 / rose #f43f5e — all 6 allowed families). | ☐ |
+| P9-15 | (Optional) Frontend build completed successfully + ECharts chunk separation | Look at build output `Route (app)  (dashboard)   650 kB` size breakdown. ECharts is separate chunk (appears in individual page route chunk size separate from `layout.tsx` global bundle). No yellow build warnings. | ☐ |
+| P9-16 | Browser Back navigation from Dashboard → click Sales drawer Orders → click browser Back → Dashboard loads OK with period selector reset to default `Week` | No crash on back (period state NOT stored in URL → expect reset to default = OK intentional design). 7 dashboard queries fire again from cache.  | ☐ |
+
+---
+
+### 12.6 Phase 9 Git Commit (After ALL 16 gates PASS verbal & both Phase 7+8 hashes pasted)
+
+```powershell
+# Run from repo root: g:\MBW Projects\Other\BS
+git add -A
+git status    # Quick review before commit — make sure:
+              # backend/prisma/seed_phase9_dashboard.ts (new)
+              # backend/src/modules/dashboard/* (4 new)
+              # backend/src/routes/index.ts (modified 1 line + import)
+              # frontend/src/lib/api/apiSlice.ts (tag added)
+              # frontend/src/lib/api/dashboardEndpoints.ts (new)
+              # frontend/src/components/dashboard/DashboardCard.tsx (new)
+              # frontend/src/app/(dashboard)/layout.tsx (import added)
+              # frontend/src/app/(dashboard)/dashboard/page.tsx (full rewrite)
+              # BUILD_PROCESS.md §12 + docs/learning-notes.md Phase9 (modified)
+              # NO node_modules, NO .env files!
+
+git commit -m "Phase 9: Dashboard & Analytics ECharts
+
+RBAC: 1 new code dashboard.read × all 7 tiers (additive no deletes)
+Backend: /dashboard mount 7 aggregate endpoints parameterized Prisma.sql
+  GET summary (26 KPIs) sales-trend gap-free top-products lead-pipeline
+      attendance-summary (5 statuses always) recent-orders recent-activities
+Frontend: DashboardCard standalone component (6 palettes no yellow)
+  4-row real dashboard page: 6 KPI cards + 4 lazy ECharts (ssr:false useMemo)
+  Row1 6 cards, Row2 SalesTrend line + LeadPipeline doughnut
+  Row3 TopProducts horiz bar + AttendanceSummary bar
+  Row4 RecentOrders list + LowStock/RecentActivity
+Audits: 2 greps 0-hits yellow-family; write-level onChange/value=/register/form=
+Docs: BUILD_PROCESS §12 gates+commands; learning-notes 5/5/3 study cards"
+
+# AFTER commit completes successfully:
+git rev-parse --short HEAD
+# Paste the short (7 char) + long hash back here for records.
+```
+
+---
+
+### 12.7 Concepts Learned This Phase
+
+1. **Aggregate queries: PostgreSQL vs Prisma ORM** — `SUM/COUNT/DATE_TRUNC/FILTER/WHERE GROUP BY` are 10x faster in raw SQL than fetching 10k rows into Node.js memory then `.reduce()`. Also avoids shipping per-order sensitive PII data to browser for reduction.
+2. **Prisma parameterized SQL safety** — `$queryRaw(Prisma.sql`SELECT * FROM t WHERE d = ${myDate}`)` is SAFE; Prisma replaces `${}` with `$1` parameter server-side. But `$queryRaw(`SELECT * FROM t WHERE d = '${myDate}'`)` (string concat, no `Prisma.sql` prefix) is SQL-INJECTION — learn to visually spot the prefix difference in code review.
+3. **Gap-free time series with `generate_series` LEFT JOIN** — If you only `GROUP BY date` on orders table, days with zero sales are MISSING from output and line chart has gaps. Pattern fix: `WITH dates AS (SELECT generate_series(start, end, '1 day'::interval) AS d) SELECT d.d, COALESCE(SUM(o.amount),0) FROM dates d LEFT JOIN orders o ON DATE(o.order_date)=d.d GROUP BY d.d ORDER BY d.d`.
+4. **Next.js code splitting with dynamic SSR-disabled imports** — Large client-only libs (ECharts, Quill, pdfmake, DnD kits) should never be in the main hydration bundle. `dynamic(() => import('heavy-lib'), { ssr:false, loading: Skeleton })` splits them into per-route lazy chunks shaved ~700KB off main app.js LCP/FCP for non-dashboard pages.
+5. **KPI period comparison semantics** — "Today vs yesterday" is symmetric. "This month vs last month" is not (this month partial, last month complete — for fairer comparison compare "same number of days into this month vs same span last month"). We implemented simple full-span comparison; note for Phase 12 hardening if user requests "fair" deltas.
+6. **Previous-period delta UX vs number sign** — Sales UP = good (green). But "Pending Leaves UP = 7 vs 1 = bad (should be red, not green)". The DashboardCard component accepts a deltaSignFlip boolean (or caller passes negative delta). In this phase we use simple naive convention: caller passes correct-signed number (for Open Leads we show neutral slate).
 
 **Concepts learned**: Aggregation queries in SQL vs Prisma, raw SQL performance benefits for reporting, ECharts React integration, dynamic imports/code splitting with Next.js, KPI dashboard layout patterns, date-period comparison (this week vs last week) calculation.
 

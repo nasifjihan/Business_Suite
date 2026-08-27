@@ -55,7 +55,7 @@ export const apiSlice = createApi({
     "LeaveTypes",
     "Leaves",
     "HRReports",
-    // Phase 9+: "DashboardKPIs"
+    "DashboardKPIs"
   ],
   endpoints: () => ({}),
 });
