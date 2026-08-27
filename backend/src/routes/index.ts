@@ -21,6 +21,7 @@ import { profileRouter } from "../modules/profile/routes";
 import { crmRouter } from "../modules/crm/routes";
 import { inventoryRouter } from "../modules/inventory/routes";
 import { salesRouter } from "../modules/sales/routes";
+import { hrmRouter } from "../modules/hrm/routes";
 
 const apiV1Router = Router();
 
@@ -36,6 +37,7 @@ apiV1Router.use("/profile", profileRouter);
 apiV1Router.use("/crm", crmRouter);
 apiV1Router.use("/inventory", inventoryRouter);
 apiV1Router.use("/sales", salesRouter);
+apiV1Router.use("/hrm", hrmRouter);
 
 // Phase 7+: /orders, /invoices, /payments
 // Phase 8+: /employees, /attendance, /leaves

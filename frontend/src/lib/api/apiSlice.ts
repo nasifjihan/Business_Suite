@@ -47,7 +47,14 @@ export const apiSlice = createApi({
     "Refunds",
     "Reports",
     "Credits",
-    // Phase 8+: "Employees", "Attendance", "LeaveRequests"
+    // Phase 8 HRM
+    "Departments",
+    "Designations",
+    "Employees",
+    "AttendanceRecords",
+    "LeaveTypes",
+    "Leaves",
+    "HRReports",
     // Phase 9+: "DashboardKPIs"
   ],
   endpoints: () => ({}),

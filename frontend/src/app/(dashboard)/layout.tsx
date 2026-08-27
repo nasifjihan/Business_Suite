@@ -9,10 +9,15 @@ import {
   ArrowLeftRight,
   BarChart3,
   Boxes,
+  Briefcase,
   Building2,
+  Calendar,
+  CalendarCheck,
+  CalendarRange,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   CreditCard,
   FileText,
   HandCoins,
@@ -47,6 +52,7 @@ import {
 import "@/lib/api/crmEndpoints";
 import "@/lib/api/inventoryEndpoints";
 import "@/lib/api/salesEndpoints";
+import "@/lib/api/hrmEndpoints";
 
 type NavItem = {
   href: string;
@@ -105,6 +111,52 @@ const SALES_SUBNAV: SubNavItem[] = [
     label: "Customer Credits",
     icon: Wallet,
     requires: { any: ["sales.credits.read"] },
+  },
+];
+
+const HRM_SUBNAV: SubNavItem[] = [
+  {
+    href: "/hrm",
+    label: "Overview",
+    icon: LayoutDashboard,
+    requires: {
+      any: [
+        "hrm.departments.read",
+        "hrm.employees.read",
+        "hrm.attendance.read",
+        "hrm.leave.read",
+      ],
+    },
+  },
+  {
+    href: "/hrm/departments",
+    label: "Departments",
+    icon: Building2,
+    requires: { any: ["hrm.departments.read"] },
+  },
+  {
+    href: "/hrm/designations",
+    label: "Designations",
+    icon: Briefcase,
+    requires: { any: ["hrm.designations.read"] },
+  },
+  {
+    href: "/hrm/employees",
+    label: "Employees",
+    icon: Users,
+    requires: { any: ["hrm.employees.read"] },
+  },
+  {
+    href: "/hrm/attendance",
+    label: "Attendance",
+    icon: Clock,
+    requires: { any: ["hrm.attendance.read", "hrm.attendance.self_check"] },
+  },
+  {
+    href: "/hrm/leaves",
+    label: "Leave Requests",
+    icon: CalendarRange,
+    requires: { any: ["hrm.leave.read", "hrm.leave.create"] },
   },
 ];
 
@@ -257,6 +309,18 @@ export default function DashboardLayout({
     ],
   });
   const [invOpen, setInvOpen] = useState(true);
+  const hasAnyHRM = useHasPermission({
+    any: [
+      "hrm.departments.read",
+      "hrm.designations.read",
+      "hrm.employees.read",
+      "hrm.attendance.read",
+      "hrm.attendance.self_check",
+      "hrm.leave.read",
+      "hrm.leave.create",
+    ],
+  });
+  const [hrmOpen, setHrmOpen] = useState(true);
 
   const handleLogout = async () => {
     try {
@@ -491,6 +555,70 @@ export default function DashboardLayout({
               )}
               {crmOpen &&
                 CRM_SUBNAV.map((sub) => {
+                  let permProps:
+                    | { one: string }
+                    | { any: string[] }
+                    | { all: string[] };
+                  if (typeof sub.requires === "string") {
+                    permProps = { one: sub.requires };
+                  } else if (sub.requires) {
+                    permProps = sub.requires as
+                      | { any: string[] }
+                      | { all: string[] };
+                  } else {
+                    permProps = { one: "*" };
+                  }
+                  return (
+                    <PermissionGate key={sub.href} {...permProps}>
+                      <Link
+                        href={sub.href}
+                        className={cn(
+                          "group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                          collapsed ? "justify-center" : "pl-9",
+                          pathname === sub.href &&
+                            "bg-slate-100/60 dark:bg-slate-800/60 text-foreground font-medium",
+                        )}
+                      >
+                        <sub.icon
+                          className={cn(
+                            "w-4 h-4 shrink-0 text-slate-500 group-hover:text-primary",
+                          )}
+                        />
+                        {!collapsed && (
+                          <span className="flex-1 truncate">{sub.label}</span>
+                        )}
+                      </Link>
+                    </PermissionGate>
+                  );
+                })}
+            </>
+          )}
+
+          {/* HRM drawer — shown only if user has any HRM sub-permission */}
+          {hasAnyHRM && (
+            <>
+              {!collapsed ? (
+                <button
+                  type="button"
+                  className="mt-2 w-full group flex items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  onClick={() => setHrmOpen((v) => !v)}
+                >
+                  <UserCog className="w-5 h-5 shrink-0 text-slate-500 group-hover:text-primary" />
+                  <span className="flex-1 truncate text-left">HR & Payroll</span>
+                  <ChevronDown
+                    className={cn(
+                      "w-4 h-4 text-slate-400 transition-transform",
+                      hrmOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+              ) : (
+                <div className="mt-2 h-6 flex items-center justify-center text-[10px] text-slate-400">
+                  HRM
+                </div>
+              )}
+              {hrmOpen &&
+                HRM_SUBNAV.map((sub) => {
                   let permProps:
                     | { one: string }
                     | { any: string[] }
