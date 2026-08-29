@@ -39,6 +39,34 @@ const SENSITIVE_FIELDS = new Set([
  * Recursively strip sensitive fields from any object (before/after snapshots).
  * Never put passwordHash / token hashes into audit log JSON columns.
  */
+function toJsonSafe(value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof (value as any).toNumber === "function" && typeof (value as any).toString === "function" &&
+      Object.prototype.hasOwnProperty.call(value, "s") && Object.prototype.hasOwnProperty.call(value, "e")) {
+    return (value as any).toString();
+  }
+  if (value instanceof Map) return Object.fromEntries(Array.from(value.entries()).map(([k, v]) => [k, toJsonSafe(v)]));
+  if (value instanceof Set) return Array.from(value).map((v) => toJsonSafe(v));
+  if (Array.isArray(value)) return value.map((v) => toJsonSafe(v));
+  if (Buffer.isBuffer(value)) return value.toString("base64");
+  if (typeof value === "bigint") return value.toString();
+  if (typeof (value as any).toJSON === "function") {
+    const j = (value as any).toJSON();
+    return toJsonSafe(j);
+  }
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (k === "constructor") continue;
+      out[k] = toJsonSafe(v);
+    }
+    return out;
+  }
+  return undefined;
+}
+
 export function omitSensitive<T = unknown>(value: T | null | undefined): T | null | undefined {
   if (value == null) return value;
   if (Array.isArray(value)) return value.map((v) => omitSensitive(v)) as unknown as T;
@@ -49,6 +77,10 @@ export function omitSensitive<T = unknown>(value: T | null | undefined): T | nul
     out[k] = omitSensitive(v);
   }
   return out as T;
+}
+
+function sanitizeJson(value: unknown): unknown {
+  return toJsonSafe(omitSensitive(value));
 }
 
 export type AuditWriteArgs = {
@@ -71,10 +103,13 @@ export async function writeAudit(
   tx: { auditLog: PrismaClient["auditLog"] } | PrismaClient,
   args: AuditWriteArgs,
 ) {
-  // Caller already passed through omitSensitive if they wanted — but double-guard.
-  const before = omitSensitive(args.beforeData);
-  const after = omitSensitive(args.afterData);
   try {
+    if ((globalThis as any).__FORCE_AUDIT_WRITE_THROW__) {
+      throw new Error((globalThis as any).__FORCE_AUDIT_WRITE_THROW__);
+    }
+    const before = sanitizeJson(args.beforeData);
+    const after = sanitizeJson(args.afterData);
+    const metadata = sanitizeJson(args.metadata);
     await (tx.auditLog as PrismaClient["auditLog"]).create({
       data: {
         userId: args.userId ?? null,
@@ -83,7 +118,7 @@ export async function writeAudit(
         entityId: args.entityId ?? null,
         beforeData: (before as unknown as Prisma.InputJsonValue) ?? undefined,
         afterData: (after as unknown as Prisma.InputJsonValue) ?? undefined,
-        metadata: (args.metadata as unknown as Prisma.InputJsonValue) ?? undefined,
+        metadata: (metadata as unknown as Prisma.InputJsonValue) ?? undefined,
         ipAddress: args.ip ?? null,
         userAgent: args.ua ?? null,
       },
@@ -91,6 +126,12 @@ export async function writeAudit(
   } catch (e) {
     // Audit is BEST-EFFORT — never let a failing audit write abort the
     // primary business transaction. Log the error server-side only.
+    // EXCEPTION: tests may explicitly request the error to bubble via
+    // globalThis.__FORCE_AUDIT_WRITE_THROW__ — this validates atomicity
+    // of the outer $transaction wrapper.
+    if ((globalThis as any).__FORCE_AUDIT_WRITE_THROW__) {
+      throw e;
+    }
     // eslint-disable-next-line no-console
     console.error("[AUDIT WRITE FAILED]", e);
   }

@@ -8,8 +8,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
+    "lint:tsc": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:unit": "vitest run src/tests/unit",
+    "test:integration": "vitest run src/tests/integration",
+    "test:coverage": "vitest run --coverage",
     "seed": "ts-node prisma/seed.ts"
   },
   "keywords": [

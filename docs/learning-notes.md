@@ -398,9 +398,198 @@ function extractErrorMessage(action): string {
 ```
 Always truncate to <120 chars for toasts because long strings break mobile toast viewport. For title case endpoint name `createCustomer → Create customer`: helper: `const camelToTitle = (s) => s.replace(/([A-Z])/g, ' $1').replace(/^./, ch => ch.toUpperCase()) + " completed successfully";`.
 
-## Phase 11 — Testing
+## Phase 11 — Testing & QA
 
----
+### Mistakes during implementation:
+1. **Wrote negative-match regex `expect(cls).not.toMatch(/yellow|amber/)` in StatusBadge test with the literal forbidden strings.** This violates the permanent grep rule: zero tolerance of yellow-family words ANYWHERE in codebase INCLUDING test descriptions. It made `grep yellow 3 hits` fail even though semantic intent was anti-yellow. Grep audit catches the literal string regardless of context. Fix: replaced logic with a 6-family positive whitelist regex `/(emerald|rose|slate|sky|violet|teal)/.test(className)` = true. Zero yellow words anywhere. Lesson: ALWAYS assert positive behavior, never negative forbidden-word strings (they fail their own audit).
+2. **StatusBadge second refactor introduced JS regex syntax error**. Used pattern `\/brose\/` inside source code (literally wrong tokens — would have thrown SyntaxError: invalid regex flag b). Not caught by tsc because regex is runtime string not type. Fixed by collapsing 5 OR conditions into a single alternation regex `emerald|rose|slate|sky|violet|teal`. Rule: prefer 1 regex over many when alternation is equivalent (less room for typos).
+3. **Forgot that rate-limit MemoryStore is a process global singleton shared across test files.** If auth.test runs first and does 15 failed login attempts → afterEach reset clears mocks but rate-limit memory store is NOT cleared. The next unrelated integration test 1st hit login returns random 429! Flaky tests == suite distrust. Fix: setup.ts globally disabled rate limit via vi.mock (9999999 cap, 1ms window) AND introduced a globalThis `__FORCE_RATE_LIMIT_TEST__` flag for ONLY the dedicated rate_limit.test.ts file. No cross-file pollution.
+4. **Tried to write `DELETE FROM users CASCADE` shortcut instead of listing 30-table ordered dependency delete.** PostgreSQL CASCADE sounds convenient, but CASCADE silently deletes junction rows we didn't intend to reset if we accidentally target the wrong base table (for example deleting the SUPERVISOR role deletes its 29 permission junction rows for future seeds — we actually want to leave permissions themselves and only delete rows created during THIS test). Worse: FK CASCADE order depends on schema constraints you can't eyeball. Ordered explicit DELETE FROM list is 15 more lines but 100% predictable. Rule: never depend on DB CASCADE in test teardown.
+5. **Mocked jsonwebtoken sign/verify in tests initially to skip crypto step (fast).** Then realized: if authMiddleware calls jwt.verify() (real implementation) and tests give it a fake signature, JWT decode fails → all 12 auth tests 401 FAIL at middleware before code under test runs. Huge waste. So we UNDID the jwt mock: use REAL `CONFIG.jwt.accessSecret` signature inside createTestJwt() helper, and only mock bcrypt (which is pure performance optimization, never breaks middleware logic). Correct rule: mock infrastructure that SLOWS tests (bcrypt), never security-critical cryptography used by middleware (JWT).
+
+### Key decisions:
+1. **RTL testing philosophy: test behavior not implementation.** Examples: GlobalTable tests never inspect state `useState()` hook values; they click the header and assert that the component rendered without throwing. DashboardCard tests look for the arrow character in the DOM (what user sees), never "deltaPositive variable is true". Tradeoff: when internal implementation refactors later (useState → useReducer), tests remain green without changes. This is the whole point of RTL — break only if behavior changes, not if code rearranged.
+2. **Real JWT sign with real secret not mocked.** Bypasses mock for jwt; mocks bcrypt only. Why? Because the 200ms 10-round bcrypt hash in createTestUser × 7 baseline users = 1.4s per test file, 7 files = 10 seconds total added (60 tests → 140 seconds per full suite = pain). Bcrypt mock cuts to ~0ms per hash (10× faster). JWT sign is 1ms, mocking gains nothing and breaks entire auth middleware path. Precision: only mock the SLOW 3rd-party crypto, never the security-critical paths under test.
+3. **ResetDatabase explicit ordered 30-table DELETE FROM list vs BEGIN/ROLLBACK transaction wrapper.** Transaction wrapper would be zero microseconds, ideal — but tests use Prisma client API calls across multiple service functions, each one gets its own connection from pool; wrapping in a single outer BEGIN is not trivial. DELETE FROM 30 tables ordered correctly = 50ms total for <50 rows; MVP suite size this is fine. Re-evaluate when tests hit 200+ (duration > 2 minutes); then invest in test DB wrapper with transactional BEGIN test/ROLLBACK cleanup. Documented upgrade path.
+4. **StatusBadge color validation positive whitelist regex over negative family match.** Prevents forbidden-word-string false positives (the mistake #1). Also means: if someone adds a new tone (say "cyan"), test FAILS because cyan not in 6 approved families = good defensive gate. Someone wants to add a 7th family? They MUST update BOTH StatusBadge TONE_CLASSES AND the test regex. Rule: whitelists catch scope creep; blacklists let new bad things slip through.
+5. **No Playwright/Cypress E2E MVP.** Added install scripts + patterns only. Why? Spec § browser gates EVERY phase (user manually runs 16+ browser gates). That IS our E2E suite. Adding headless browser tests duplicates that at huge cost (install 4 chromium binaries 1.5 GB download, 10-30 minute GitHub Actions first time, flaky waitFor selectors). ROI negative. Keep E2E as manual browser gates, add Playwright only Phase 12 if CI/CD automated pipeline requested.
+
+### Interview Q&A (3 study cards):
+
+**Q: "You have a 30-table database with circular FK dependencies. Write a test helper resetDatabase() that runs in <100ms for 200 rows of test data, and explain the rules you follow when writing the DELETE order. Then explain why truncate with cascade is dangerous in test helpers."**
+
+A: Rules + pattern:
+
+Step 1: Build a directed graph of FK relations: every row in table A `REFERENCES table B` means edge A → B (A depends on B). To delete safely: delete leaf nodes FIRST, no inbound FK edges remaining. Then walk inward removing next layer leaves; finally delete root parent standalone tables last.
+
+Step 2: Junction tables (many-to-many, RolePermission, UserRole, Stock.productId+warehouseId composite) go FIRST because they hold FKs OUT to 2 parents simultaneously. Always delete 100% junction rows before touching either parent.
+
+Step 3: Append-only / child tables with 2+ FKs next: AuditLog, Refunds, Payments, StockMovements, OrderItems, Attendance, LeaveRequests → each FK out to Orders/Users/Products etc. Delete them before parents.
+
+Step 4: Business entity tables middle: Customers, Leads, Contacts, Products, Orders, Employees, Warehouses, Departments.
+
+Step 5: Standalone master tables last: Permissions, Roles, Users. These have zero outgoing FK dependencies (or FKs all already deleted in junctions).
+
+Step 6: Wrap in single prisma.$transaction([...deleteMany]) so if anything fails (wrong order, new table added) the entire reset rolls back clean — no partial deletes which would cause next test to fail mysteriously.
+
+Why TRUNCATE ... CASCADE dangerous: (1) CASCADE recursively deletes ALL FK-connected rows. If a dev adds a new `ReportSnapshot` table FK→Users, truncate users CASCADE wipes ReportSnapshot. That deletes seeded rows unrelated to this test. (2) TRUNCATE resets sequence serial counters AUTO_INCREMENT (next id starts at 1 again). That's fine in isolation BUT UI tests that use the ID in a URL match could couple to hardcoded "test customer id 1" — brittle. DELETE FROM preserves sequence counters (IDs monotonically increasing across tests), better matches real-world pattern (never restart IDs in prod). (3) TRUNCATE requires ACCESS EXCLUSIVE lock on every table; in concurrent test workers this deadlocks. DELETE row-level locks only.
+
+Code skeleton:
+```ts
+export async function resetDatabase(prisma: PrismaClient) {
+  await prisma.$transaction([
+    prisma.auditLog.deleteMany(),
+    prisma.refund.deleteMany(),
+    prisma.payment.deleteMany(),
+    prisma.invoice.deleteMany(),
+    prisma.orderItem.deleteMany(),
+    prisma.order.deleteMany(),
+    prisma.stockMovement.deleteMany(),
+    prisma.stock.deleteMany(),
+    prisma.leadActivity.deleteMany(),
+    prisma.contact.deleteMany(),
+    prisma.lead.deleteMany(),
+    prisma.customer.deleteMany(),
+    prisma.product.deleteMany(),
+    prisma.warehouse.deleteMany(),
+    prisma.category.deleteMany(),
+    prisma.attendance.deleteMany(),
+    prisma.leaveRequest.deleteMany(),
+    prisma.employee.deleteMany(),
+    prisma.designation.deleteMany(),
+    prisma.department.deleteMany(),
+    prisma.rolePermission.deleteMany(),
+    prisma.userRole.deleteMany(),
+    prisma.refreshToken.deleteMany(),
+    prisma.permission.deleteMany(),
+    prisma.role.deleteMany(),
+    prisma.user.deleteMany(),
+  ]);
+}
+```
+If we ever add a new table later and forget to add it here: next test fails because orphan rows block parent DELETE (FK violation). That fails LOUDLY on first write attempt (good — forces helper update, no silent data leak).
+
+**Q: "Write the frontend test for our centralized RTK toast middleware. Requirements: (a) mutations fulfilled show user-friendly title-case toast; (b) queries fulfilled never toasts; (c) rejected mutations show the nested backend error message; (d) long errors truncate to 120 chars; (e) missing payload shape falls back to a hardcoded string. Show the exact vitest expect() assertions you'd write, not the middleware itself."**
+
+A: The exact 5 assertions with `vi.spyOn`:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import rtkToastMiddleware from '@/lib/api/rtkToastMiddleware'
+import { toast } from '@/components/feedback/Toast'
+
+describe('rtkToastMiddleware', () => {
+  let successSpy: any, errorSpy: any
+  const fakeNext = (action: any) => ({ value: action })
+  const fakeStore = { getState: () => ({}), dispatch: vi.fn() } as any
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    successSpy = vi.spyOn(toast, 'success').mockImplementation(() => {})
+    errorSpy = vi.spyOn(toast, 'error').mockImplementation(() => {})
+  })
+
+  it('(a) mutation fulfilled title-case success toast with camelToTitle endpoint name', () => {
+    const action = { type: 'customers/createCustomer/fulfilled', meta: { arg: { type: 'mutation', endpointName: 'createCustomer' } } }
+    rtkToastMiddleware(fakeStore)(fakeNext)(action)
+    // Exact camelToTitle assertion: "createCustomer" → "Create customer completed successfully"
+    expect(successSpy).toHaveBeenCalledTimes(1)
+    expect(successSpy).toHaveBeenCalledWith('Create customer completed successfully')
+  })
+
+  it('(b) query fulfilled NEVER toasts (dashboard 7 parallel guard against spam)', () => {
+    const action = { type: 'dashboard/getSummary/fulfilled', meta: { arg: { type: 'query', endpointName: 'getSummary' } } }
+    rtkToastMiddleware(fakeStore)(fakeNext)(action)
+    // Not just success — BOTH toast exports non-called (no error either)
+    expect(successSpy).not.toHaveBeenCalled()
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('(c) mutation rejected reads nested backend error envelope', () => {
+    const msg = 'A record with this sku already exists. Please use a different value.'
+    const action = {
+      type: 'inventory/updateProduct/rejected',
+      meta: { arg: { type: 'mutation', endpointName: 'updateProduct' } },
+      payload: { data: { error: { code: 'CONFLICT', message: msg } } }
+    }
+    rtkToastMiddleware(fakeStore)(fakeNext)(action)
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    // 1st positional argument is title string, equals backend message
+    expect(errorSpy.mock.calls[0][0]).toBe(msg)
+  })
+
+  it('(d) mutation rejected very long error message truncates to ≤120 characters', () => {
+    const veryLong = 'x'.repeat(500)
+    const action = {
+      type: 'sales/refundPayment/rejected',
+      meta: { arg: { type: 'mutation' } },
+      payload: { data: { error: { message: veryLong } } }
+    }
+    rtkToastMiddleware(fakeStore)(fakeNext)(action)
+    const passedMessage = errorSpy.mock.calls[0][0] as string
+    expect(passedMessage.length).toBeLessThanOrEqual(120)
+    expect(passedMessage.endsWith('…') || passedMessage.endsWith('...') || passedMessage.length === 120).toBeTruthy()
+  })
+
+  it('(e) missing payload undefined rejected action falls back to hardcoded generic fallback', () => {
+    // action shape is malformed — no payload or error at all (RTK internal rejection, network crash)
+    const action = {
+      type: 'hrm/deleteEmployee/rejected',
+      meta: { arg: { type: 'mutation' } },
+      error: { message: undefined } as any
+    }
+    rtkToastMiddleware(fakeStore)(fakeNext)(action)
+    expect(errorSpy).toHaveBeenCalledWith('An error occurred')
+  })
+})
+```
+
+The key pattern: beforeEach `vi.clearAllMocks()` so leftover calls from prior test don't count. SpyOn the imperative toast module (not hook based) because middleware runs outside React tree. This is why we built the toast module with an imperative API instead of useToast hook back in P10. Made this middleware test 5× cleaner.
+
+**Q: "For the sales_checkout atomic transaction test — the one that injects `prisma.auditLog.create.mockRejectedValueOnce('DB down')` to prove Prisma $transaction ALL-OR-NOTHING. (a) Why mock prisma.auditLog instead of the Payment model? (b) What if mock approach doesn't work because Prisma Client generated methods use prototype binding differently? Show alternative REAL SQL approach to force the 4th step rollback without mocking. (c) What final count assertions on 5 tables PROVE rollback happened not partial-success?"**
+
+A: (a) AuditLog.create is the LAST WRITE in the 5-step checkout $transaction order. If you mock Payment to fail early in step #3, Orders row was never written either — so the test can't distinguish "partial write rolled back" from "nothing happened at all". Mocking the final audit step (step #5) guarantees steps 1-4 (order → orderItem → stock decrement → payment INSERT) ALL SUCCEEDED inside the transaction during the call. The test then validates that when the final 5th op fails, the outer Prisma.$transaction ABORTS everything and steps 1-4 vaporize from DB. This is the strongest possible assertion.
+
+(b) If vi.spyOn(prisma.auditLog, 'create') fails to intercept calls (older Prisma 7.x proxy behavior, class prototype vs object method issue) — use this real-DB "poison pill" alternative instead:
+
+Create a DB-level rule BEFORE the test (execute once inside transaction outside the test):
+```sql
+CREATE OR REPLACE FUNCTION raise_audit_limit() RETURNS trigger AS $$
+BEGIN
+  IF (SELECT COUNT(*) FROM "AuditLog") >= 5 THEN
+    RAISE EXCEPTION 'audit full forced rollback test';
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER audit_poison_pill BEFORE INSERT ON "AuditLog" EXECUTE FUNCTION raise_audit_limit();
+```
+Seed EXACTLY 4 existing dummy audit rows → next insert hits 5 → throws server-side exception during checkout 5th write → triggers full $tx rollback without JS mocking. Then drop trigger after test. Bulletproof approach regardless of Prisma internals.
+
+(c) After test checkout fails, immediately query the 5 tables. Rollback is PROVEN IFF ALL 5 counts match their exact BEFORE state:
+
+```ts
+const before = {
+  orders: await prisma.order.count(),
+  orderItems: await prisma.orderItem.count(),
+  stockQty: (await prisma.stock.findFirst({ where: { productId, warehouseId } }))!.quantity,
+  payments: await prisma.payment.count(),
+  audit: await prisma.auditLog.count(),
+}
+// Now try checkout (should throw due to auditLog mock failure)
+await expect(checkoutPost).rejects.toThrow()
+
+// AFTER
+const after = { ... same queries ... }
+// ROLLBACK PROOF — every single number matches exactly pre-checkout:
+expect(after.orders).toBe(before.orders)              // no new order row
+expect(after.orderItems).toBe(before.orderItems)      // no new items rows
+expect(after.stockQty).toBe(before.stockQty)          // stock qty BACK to 10
+expect(after.payments).toBe(before.payments)          // no payment SUCCESS row
+expect(after.audit).toBe(before.audit)                // no audit ORDER_CREATE
+```
+
+If ANY of these 5 fail the equality assertion, you have a partial write bug (code calls prisma.auditLog outside $transaction accidentally, or stock update ran without transaction, etc.). The 5-table joint equality check catches regression bugs that 1-table check would miss. This is why checkout is the GATE test.
+
 
 ## Phase 12 — Deployment
 

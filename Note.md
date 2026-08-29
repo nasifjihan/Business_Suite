@@ -20,3 +20,6 @@ npm install @reduxjs/toolkit react-redux @tanstack/react-table react-hook-form @
 npm install @radix-ui/react-dialog @radix-ui/react-select @radix-ui/react-dropdown-menu @radix-ui/react-label @radix-ui/react-slot @radix-ui/react-toast @radix-ui/react-alert-dialog @radix-ui/react-tabs @radix-ui/react-avatar @radix-ui/react-separator @radix-ui/react-tooltip @radix-ui/react-popover @radix-ui/react-checkbox @radix-ui/react-switch
 
 npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom @types/node @types/react @types/react-dom
+
+
+npx tsc --noEmit
