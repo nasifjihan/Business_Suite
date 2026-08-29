@@ -1,18 +1,20 @@
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
-import { createApp } from '@/app';
 import { prisma } from '@/lib/prisma';
 import { seedBaseline, createTestJwt } from '../testUtils';
-
-(globalThis as any).__FORCE_RATE_LIMIT_TEST__ = true;
-
-const app = createApp();
+import type { Express } from 'express';
 
 describe('Rate Limiting & Security (Integration)', () => {
   let seeded: Awaited<ReturnType<typeof seedBaseline>>;
   let adminJwt: string;
+  let app: Express;
 
   beforeAll(async () => {
+    (globalThis as any).__FORCE_RATE_LIMIT_TEST__ = true;
+    await vi.dynamicImportSettled?.();
+    vi.resetModules();
+    const { createApp } = await import('@/app');
+    app = createApp();
     seeded = await seedBaseline(prisma);
     adminJwt = createTestJwt(seeded.admin.id, ['inventory.products.read', 'crm.customers.read'], 'ADMIN');
   });
@@ -21,12 +23,16 @@ describe('Rate Limiting & Security (Integration)', () => {
     vi.clearAllMocks();
   });
 
+  afterAll(() => {
+    (globalThis as any).__FORCE_RATE_LIMIT_TEST__ = undefined;
+  });
+
   it('15 rapid POST /api/v1/auth/login → 11th+ returns 429 Too Many Requests', async () => {
     let first429 = -1;
     for (let i = 0; i < 15; i++) {
       const res = await request(app)
         .post('/api/v1/auth/login')
-        .send({ email: `rate-${i}-${Date.now()}@test.com`, password: 'WrongPass123!' });
+        .send({ email: `rate-${i}-${Date.now()}-${i}@test.com`, password: 'WrongPass123!' });
       if (res.status === 429 && first429 === -1) {
         first429 = i;
       }

@@ -21,8 +21,9 @@ describe('CRM Customers Module', () => {
       .set('Authorization', `Bearer ${adminJwt}`);
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.meta.page).toBeDefined();
-    expect(res.body.meta.totalItems).toBeDefined();
+    expect(Array.isArray(res.body.data.items)).toBe(true);
+    expect(res.body.data.meta.page).toBeDefined();
+    expect(res.body.data.meta.totalItems).toBeDefined();
   });
 
   it('GET /api/v1/crm/customers without JWT returns 401', async () => {
@@ -94,8 +95,8 @@ describe('CRM Customers Module', () => {
       .get('/api/v1/crm/customers?search=Test')
       .set('Authorization', `Bearer ${adminJwt}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.length).toBeGreaterThanOrEqual(1);
-    for (const c of res.body.data) {
+    expect(res.body.data.items.length).toBeGreaterThanOrEqual(1);
+    for (const c of res.body.data.items) {
       expect(c.name.toLowerCase()).toContain('test');
     }
   });

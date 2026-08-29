@@ -92,32 +92,32 @@ export const DashboardService = {
       completedTodayRow,
       completedYesterdayRow,
     ] = await Promise.all([
-      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM(total_amount),0)::float AS s FROM "Order" WHERE order_date = ${today} AND status <> 'CANCELLED'`),
-      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM(total_amount),0)::float AS s FROM "Order" WHERE order_date = ${yesterday} AND status <> 'CANCELLED'`),
-      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM(total_amount),0)::float AS s FROM "Order" WHERE order_date >= ${monthStart} AND order_date <= ${today} AND status <> 'CANCELLED'`),
-      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM(total_amount),0)::float AS s FROM "Order" WHERE order_date >= ${lastMonthStart} AND order_date <= ${lastMonthEnd} AND status <> 'CANCELLED'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE order_date = ${today}`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE order_date = ${yesterday}`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Customer" WHERE created_at >= ${monthStart} AND created_at <= ${today} + INTERVAL '1 day'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Customer" WHERE created_at >= ${lastMonthStart} AND created_at <= ${lastMonthEnd} + INTERVAL '1 day'`),
+      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM("totalAmount"),0)::float AS s FROM "Order" WHERE "orderDate" = ${today} AND status <> 'CANCELLED'`),
+      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM("totalAmount"),0)::float AS s FROM "Order" WHERE "orderDate" = ${yesterday} AND status <> 'CANCELLED'`),
+      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM("totalAmount"),0)::float AS s FROM "Order" WHERE "orderDate" >= ${monthStart} AND "orderDate" <= ${today} AND status <> 'CANCELLED'`),
+      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM("totalAmount"),0)::float AS s FROM "Order" WHERE "orderDate" >= ${lastMonthStart} AND "orderDate" <= ${lastMonthEnd} AND status <> 'CANCELLED'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE "orderDate" = ${today}`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE "orderDate" = ${yesterday}`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Customer" WHERE "createdAt" >= ${monthStart} AND "createdAt" <= ${today} + INTERVAL '1 day'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Customer" WHERE "createdAt" >= ${lastMonthStart} AND "createdAt" <= ${lastMonthEnd} + INTERVAL '1 day'`),
       prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Lead" WHERE status IN ('NEW','CONTACTED','QUALIFIED','PROPOSAL')`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Lead" WHERE status IN ('NEW','CONTACTED','QUALIFIED','PROPOSAL') AND created_at < ${weekStart}`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Attendance" WHERE attendance_date = ${today} AND status IN ('PRESENT','LATE','HALF_DAY')`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Attendance" WHERE attendance_date = ${yesterday} AND status IN ('PRESENT','LATE','HALF_DAY')`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Lead" WHERE status IN ('NEW','CONTACTED','QUALIFIED','PROPOSAL') AND "createdAt" < ${weekStart}`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Attendance" WHERE "attendanceDate" = ${today} AND status IN ('PRESENT','LATE','HALF_DAY')`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Attendance" WHERE "attendanceDate" = ${yesterday} AND status IN ('PRESENT','LATE','HALF_DAY')`),
       prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "LeaveRequest" WHERE status = 'PENDING'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "LeaveRequest" WHERE status = 'PENDING' AND created_at < ${today}`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(DISTINCT p.id)::bigint AS c FROM "Product" p INNER JOIN "Stock" s ON s.product_id = p.id GROUP BY p.id, p.status HAVING COALESCE(SUM(s.quantity),0) < MAX(s.minimum_level)`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(DISTINCT p.id)::bigint AS c FROM "Product" p INNER JOIN "Stock" s ON s.product_id = p.id WHERE s.updated_at < ${weekStart} GROUP BY p.id HAVING COALESCE(SUM(s.quantity),0) < MAX(s.minimum_level)`),
-      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM(total_amount)::float / NULLIF(COUNT(*),0),0)::float AS s FROM "Order" WHERE order_date >= ${monthStart} AND order_date <= ${today} AND status = 'COMPLETED'`),
-      prisma.$queryRaw<{ won: bigint; total: bigint }[]>(Prisma.sql`SELECT COUNT(*) FILTER (WHERE status='WON')::bigint AS won, COUNT(*) FILTER (WHERE status IN ('WON','LOST'))::bigint AS total FROM "Lead" WHERE created_at >= ${monthStart} AND created_at <= ${today} + INTERVAL '1 day'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE order_date >= ${monthStart} AND order_date <= ${today}`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE order_date >= ${lastMonthStart} AND order_date <= ${lastMonthEnd}`),
-      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM(total_amount),0)::float AS s FROM "Order" WHERE order_date >= ${weekStart} AND order_date <= ${today} AND status <> 'CANCELLED'`),
-      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM(total_amount),0)::float AS s FROM "Order" WHERE order_date >= ${lastWeekStart} AND order_date <= ${lastWeekEnd} AND status <> 'CANCELLED'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Lead" WHERE status = 'WON' AND won_lost_at >= ${monthStart} AND won_lost_at <= ${today} + INTERVAL '1 day'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Lead" WHERE status = 'LOST' AND won_lost_at >= ${monthStart} AND won_lost_at <= ${today} + INTERVAL '1 day'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE order_date = ${today} AND status = 'COMPLETED'`),
-      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE order_date = ${yesterday} AND status = 'COMPLETED'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "LeaveRequest" WHERE status = 'PENDING' AND "createdAt" < ${today}`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(DISTINCT p.id)::bigint AS c FROM "Product" p INNER JOIN "Stock" s ON s."productId" = p.id GROUP BY p.id, p.status HAVING COALESCE(SUM(s.quantity),0) < MAX(s."minimumLevel")`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(DISTINCT p.id)::bigint AS c FROM "Product" p INNER JOIN "Stock" s ON s."productId" = p.id WHERE s."updatedAt" < ${weekStart} GROUP BY p.id HAVING COALESCE(SUM(s.quantity),0) < MAX(s."minimumLevel")`),
+      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM("totalAmount")::float / NULLIF(COUNT(*),0),0)::float AS s FROM "Order" WHERE "orderDate" >= ${monthStart} AND "orderDate" <= ${today} AND status = 'COMPLETED'`),
+      prisma.$queryRaw<{ won: bigint; total: bigint }[]>(Prisma.sql`SELECT COUNT(*) FILTER (WHERE status='WON')::bigint AS won, COUNT(*) FILTER (WHERE status IN ('WON','LOST'))::bigint AS total FROM "Lead" WHERE "createdAt" >= ${monthStart} AND "createdAt" <= ${today} + INTERVAL '1 day'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE "orderDate" >= ${monthStart} AND "orderDate" <= ${today}`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE "orderDate" >= ${lastMonthStart} AND "orderDate" <= ${lastMonthEnd}`),
+      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM("totalAmount"),0)::float AS s FROM "Order" WHERE "orderDate" >= ${weekStart} AND "orderDate" <= ${today} AND status <> 'CANCELLED'`),
+      prisma.$queryRaw<{ s: number }[]>(Prisma.sql`SELECT COALESCE(SUM("totalAmount"),0)::float AS s FROM "Order" WHERE "orderDate" >= ${lastWeekStart} AND "orderDate" <= ${lastWeekEnd} AND status <> 'CANCELLED'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Lead" WHERE status = 'WON' AND "wonLostAt" >= ${monthStart} AND "wonLostAt" <= ${today} + INTERVAL '1 day'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Lead" WHERE status = 'LOST' AND "wonLostAt" >= ${monthStart} AND "wonLostAt" <= ${today} + INTERVAL '1 day'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE "orderDate" = ${today} AND status = 'COMPLETED'`),
+      prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS c FROM "Order" WHERE "orderDate" = ${yesterday} AND status = 'COMPLETED'`),
     ]);
 
     const won = toNum(leadConvRow[0]?.won);
@@ -162,10 +162,10 @@ export const DashboardService = {
         )
         SELECT
           TO_CHAR(s.d, 'YYYY-MM-DD') AS date_label,
-          COALESCE(SUM(o.total_amount),0)::float AS total,
+          COALESCE(SUM(o."totalAmount"),0)::float AS total,
           COALESCE(COUNT(o.id),0)::bigint AS orders
         FROM series s
-        LEFT JOIN "Order" o ON o.order_date = s.d AND o.status <> 'CANCELLED'
+        LEFT JOIN "Order" o ON o."orderDate" = s.d AND o.status <> 'CANCELLED'
         GROUP BY s.d
         ORDER BY s.d
       `);
@@ -183,10 +183,10 @@ export const DashboardService = {
         )
         SELECT
           TO_CHAR(s.d, 'YYYY-MM-DD') AS date_label,
-          COALESCE(SUM(o.total_amount),0)::float AS total,
+          COALESCE(SUM(o."totalAmount"),0)::float AS total,
           COALESCE(COUNT(o.id),0)::bigint AS orders
         FROM series s
-        LEFT JOIN "Order" o ON o.order_date = s.d AND o.status <> 'CANCELLED'
+        LEFT JOIN "Order" o ON o."orderDate" = s.d AND o.status <> 'CANCELLED'
         GROUP BY s.d
         ORDER BY s.d
       `);
@@ -204,10 +204,10 @@ export const DashboardService = {
         )
         SELECT
           TO_CHAR(s.d, 'YYYY-MM-DD') AS date_label,
-          COALESCE(SUM(o.total_amount),0)::float AS total,
+          COALESCE(SUM(o."totalAmount"),0)::float AS total,
           COALESCE(COUNT(o.id),0)::bigint AS orders
         FROM series s
-        LEFT JOIN "Order" o ON o.order_date = s.d AND o.status <> 'CANCELLED'
+        LEFT JOIN "Order" o ON o."orderDate" = s.d AND o.status <> 'CANCELLED'
         GROUP BY s.d
         ORDER BY s.d
       `);
@@ -224,10 +224,10 @@ export const DashboardService = {
       )
       SELECT
         TO_CHAR(s.d, 'YYYY-MM') AS date_label,
-        COALESCE(SUM(o.total_amount),0)::float AS total,
+        COALESCE(SUM(o."totalAmount"),0)::float AS total,
         COALESCE(COUNT(o.id),0)::bigint AS orders
       FROM series s
-      LEFT JOIN "Order" o ON DATE_TRUNC('month', o.order_date) = s.d AND o.status <> 'CANCELLED'
+      LEFT JOIN "Order" o ON DATE_TRUNC('month', o."orderDate") = s.d AND o.status <> 'CANCELLED'
       GROUP BY s.d
       ORDER BY s.d
     `);
@@ -237,14 +237,14 @@ export const DashboardService = {
   async topProducts(limit: number): Promise<TopProductRow[]> {
     const rows = await prisma.$queryRaw<TopProductsRaw[]>(Prisma.sql`
       SELECT
-        oi.product_id,
-        MAX(oi.product_name) AS name,
+        oi."productId",
+        MAX(oi."productName") AS name,
         COALESCE(SUM(oi.quantity),0)::bigint AS qty_sold,
-        COALESCE(SUM(oi.quantity * oi.unit_price),0)::float AS revenue
+        COALESCE(SUM(oi.quantity * oi."unitPrice"),0)::float AS revenue
       FROM "OrderItem" oi
-      INNER JOIN "Order" o ON o.id = oi.order_id
+      INNER JOIN "Order" o ON o.id = oi."orderId"
       WHERE o.status = 'COMPLETED'
-      GROUP BY oi.product_id
+      GROUP BY oi."productId"
       ORDER BY revenue DESC
       LIMIT ${limit}::int
     `);
@@ -281,7 +281,7 @@ export const DashboardService = {
     const rows = await prisma.$queryRaw<AttendanceRaw[]>(Prisma.sql`
       SELECT status, COUNT(*)::bigint AS count
       FROM "Attendance"
-      WHERE attendance_date = ${targetDate}
+      WHERE "attendanceDate" = ${targetDate}
       GROUP BY status
     `);
     const byStatus: Record<string, number> = {};
@@ -321,17 +321,17 @@ export const DashboardService = {
     const rows = await prisma.$queryRaw<RecentActivitiesRaw[]>(Prisma.sql`
       SELECT
         al.id,
-        al.created_at AS time,
-        u.name AS actor_name,
+        al."createdAt" AS time,
+        u."firstName" || ' ' || u."lastName" AS actor_name,
         al.action::text AS action,
-        al.entity_type AS entity_type,
+        al."entityType" AS entity_type,
         COALESCE(
           al.metadata->>'description',
-          al.action::text || ' ' || COALESCE(al.entity_type, '') || CASE WHEN al.entity_id IS NOT NULL THEN ' ' || al.entity_id ELSE '' END
+          al.action::text || ' ' || COALESCE(al."entityType", '') || CASE WHEN al."entityId" IS NOT NULL THEN ' ' || al."entityId" ELSE '' END
         ) AS description
       FROM "AuditLog" al
-      LEFT JOIN "User" u ON u.id = al.user_id
-      ORDER BY al.created_at DESC
+      LEFT JOIN "User" u ON u.id = al."userId"
+      ORDER BY al."createdAt" DESC
       LIMIT ${limit}::int
     `);
     return rows.map((r: RecentActivitiesRaw) => ({
