@@ -59,7 +59,7 @@ const userFormSchema = z.object({
 type UserFormValues = z.infer<typeof userFormSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Role → StatusBadge tone map (NO YELLOW/AMBER family per user profile!)
+// Role → StatusBadge tone map (6-tone palette only)
 // ─────────────────────────────────────────────────────────────────────────────
 const ROLE_TONE: Record<
   string,

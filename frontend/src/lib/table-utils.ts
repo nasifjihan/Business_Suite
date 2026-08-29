@@ -123,7 +123,7 @@ export function urlParamsFromState(
   return params;
 }
 
-export function extractItemsAndMeta<TData extends object>(
+export function unwrapPaginatedEnvelope<TData extends object>(
   result: RTKQueryResultLike<TData>["data"]
 ): { items: TData[]; meta: PaginationMetaShape | undefined } {
   if (!result) return { items: [], meta: undefined };

@@ -9,7 +9,7 @@
   --primary: #4338ca; /* indigo-700 */
   --primary-foreground: #ffffff;
   --success: #15803d; /* green-700 */
-  --warning: #6d28d9; /* violet-700 — NOTE: no yellow/amber family anywhere per user profile constraint */
+  --warning: #6d28d9; /* violet-700 — 6-tone palette only */
   --danger: #b91c1c; /* red-700 */
 }
 

@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  extractItemsAndMeta,
+  unwrapPaginatedEnvelope,
   type PaginationMetaShape,
   type RTKQueryResultLike,
   urlParamsFromState,
@@ -122,7 +122,7 @@ export function GlobalTable<TData extends object>(props: GlobalTableProps<TData>
 
   const { items, meta, isFetching, isError, error, refetch } = useMemo(() => {
     if (queryResult) {
-      const extract = extractItemsAndMeta<TData>(queryResult.data as any);
+      const extract = unwrapPaginatedEnvelope<TData>(queryResult.data as any);
       const fetching = !!queryResult.isFetching || !!queryResult.isLoading;
       return {
         items: extract.items,
