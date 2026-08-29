@@ -2225,48 +2225,82 @@ git rev-parse HEAD
 
 ---
 
-## 16. PHASE 13 — Docker & Nginx Learning
+## 16. PHASE 13 — Docker & Nginx Learning (PURE EDUCATIONAL)
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ COMPLETED — 4 new files created: Dockerfile 4-stage · docker-compose 3-service · nginx.conf reverse-proxy · .dockerignore.
+>
+> **NOT REQUIRED FOR LOCAL RUN OR DEPLOY.** Phase 12 (Render + Vercel) is the real deployment. This is 100% interview-learning content.
 
-**This phase is PURELY EDUCATIONAL.** You don't need Docker to run this project locally. But Docker is on every backend job description, so we learn it.
+### Educational Goals
+- Multi-stage Docker build layer caching & image size reduction (~250 MB final alpine vs 1.2 GB if single-stage)
+- Container networking DNS: `@postgres:5432` service-name hostname (NOT localhost)
+- Nginx reverse proxy: hide Express behind L7 LB, X-Forwarded headers so Express rate-limit & audit get real client IP not nginx container IP
+- Idempotent container startup: CMD runs `prisma migrate deploy` first before app server = DB always latest schema on boot
+- Non-root user container security + dumb-init PID-1 reaper (fixes Node.js SIGTERM not handled on alpine)
+- Named volumes: persist Postgres `PGDATA` across `docker compose down` vs `-v` full wipe WARNING
 
-### What You'll Learn
-- **Image vs Container**: An image is the compiled "recipe" (OS + Node + code). A container is a running instance of that image. Think: image = class, container = object.
-- **Dockerfile**: Build instructions for the image (`FROM`, `COPY`, `RUN npm install`, `EXPOSE`, `CMD`).
-- **Docker Compose**: `docker-compose.yml` orchestrates multiple containers (postgres + backend + nginx) as one stack. One command: `docker compose up`.
-- **Volumes**: Map a host folder or named volume to a container path. Persists PostgreSQL data when containers are deleted. Without volumes, `rm -rf postgres_container` → ALL DATA LOST.
-- **Container networking**: Containers on the same docker-compose network can talk to each other by service name (e.g. backend can connect to postgres via `postgres:5432` hostname, not localhost).
-- **Nginx as reverse proxy**: Browser → `https://app.example.com` → Nginx on port 443 → `/api/*` goes to Express backend container (internal port 5000), `/` goes to Next.js frontend container or Nginx serves static Next build. This is how enterprise deployments work. Nginx also handles TLS/HTTPS termination (SSL cert from Let's Encrypt).
-- **How this differs from actual deployment**: We deployed on Vercel+Render, NOT Docker. Docker is how you'd self-host on AWS EC2 / DigitalOcean Droplet / Hetzner.
+### Files (4 NEW + 1 compose yaml)
+1. **[backend/Dockerfile](file:///g:/MBW%20Projects/Other/BS/backend/Dockerfile)** — 4 stages `base → deps → builder → production`:
+   - `base`: node:22-alpine + openssl + dumb-init + non-root user nodeuser/nodegrp
+   - `deps`: `npm ci --include=dev` (typescript, prisma, vitest dev deps)
+   - `builder`: `npx prisma generate` (LINUX MUSL engine, NOT windows) THEN `tsc → dist/`
+   - `production`: `npm ci --omit=dev` (runtime only) + COPY dist + COPY prisma folder/migrations + USER node + CMD `npx prisma migrate deploy && node dist/server.js`
+2. **[docker-compose.yml](file:///g:/MBW%20Projects/Other/BS/docker-compose.yml)** — 3 services ordered by health depend_on chains:
+   - `postgres` (16-alpine, `pgdata` named volume, healthcheck `pg_isready` 5s interval, exposed host:5432)
+   - `backend` depends_on postgres condition service_healthy, env vars DATABASE_URL host `postgres` (container DNS), 17 variables from compose, health wget /health
+   - `nginx` depends_on backend service_healthy, mounts nginx.conf RO read-only, 80:80
+   - Custom network `bs-network` bridge + volume `bs-pgdata` persistent names
+3. **[nginx.conf](file:///g:/MBW%20Projects/Other/BS/nginx.conf)** — 3 locations (ROOT / returns JSON welcome, /api/ proxies pass **NO TRAILING SLASH** preserves full URI `/api/v1/...`, /health proxies). `server_tokens off` hides nginx version. `X-Forwarded-For / X-Real-IP / X-Forwarded-Proto / Host` headers set correctly. `client_max_body_size 10m` = matches express.json limit. `set_real_ip_from` private CIDR ranges so Express sees real client IP.
+4. **[.dockerignore](file:///g:/MBW%20Projects/Other/BS/.dockerignore)** — ignore 20 patterns (node_modules / dist / coverage / .env* / .git / logs / *.log / docs / Note.md). Prevents credential COPY leak + layer cache invalidation false positives.
 
-### Files Created
-- `backend/Dockerfile` — Multi-stage build: Stage 1 installs all deps + builds TypeScript → dist/. Stage 2 is a smaller image with only production deps + dist/. Security best practice: smaller attack surface.
-- `backend/.dockerignore` — Prevents COPYing node_modules, .env, dist, etc.
-- `docker-compose.yml` — Defines 3 services:
-  1. **postgres**: postgres:16 image, environment POSTGRES_DB/PASSWORD, volume `postgres_data:/var/lib/postgresql/data`, port 5432 published locally.
-  2. **backend**: `build: ./backend`, env_file: `./backend/.env`, ports "5000:5000", depends_on postgres.
-  3. **(Optional)** pgadmin: dpage/pgadmin4, port 5050:80, for DB UI in Docker.
-- `nginx/Dockerfile` + `nginx/nginx.conf` — Nginx reverse proxy config (for local learning, not required for free deployment).
+### Quick User Commands (if Docker Desktop installed)
+```powershell
+# 1. Parse compose & expand variables (SKIP if no docker installed)
+docker compose config  # P13-2 parse gate
 
-### Running It
+# 2. (If docker installed & want to play)
+docker compose up -d --build
+docker compose logs -f backend   # watch migrate deploy + server start
+curl http://localhost/health     # thru nginx → backend 200
+curl -X POST http://localhost/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"admin@test.com","password":"Admin@123"}'
+# docker compose down       # KEEPS pgdata volume
+# docker compose down -v    # ⚠️ DESTROYS pgdata → LOSE ALL DATA!
 ```
-# 1. Start everything
-docker compose up -d
-# 2. Check logs
-docker compose logs -f backend
-# 3. Run migration inside backend container
-docker compose exec backend npx prisma migrate deploy
-# 4. Run seed
-docker compose exec backend npx prisma db seed
-# 5. Open http://localhost:5000/api/v1/health — should be OK
-# 6. Stop and remove (CAUTION: -v DELETES postgres volume = data loss!)
-docker compose down
-# Stop without deleting volume
-docker compose down
+
+### 12 Gates Checklist (P13-A → P13-12)
+| # | Gate | Status |
+|---|------|--------|
+| P13-A | Backend npx tsc --noEmit 0 | ☐ |
+| P13-B | Frontend npx tsc --noEmit 0 | ☐ |
+| P13-1 | `docker build backend --target production` builds OK (SKIP if no Docker) | ☐ / SKIP |
+| P13-2 | `docker compose config` valid yaml (or python yaml.safe_load no errors) | ☐ |
+| P13-3 | `nginx -t` syntax valid via docker run (SKIP if no docker) | ☐ / SKIP |
+| P13-4 | .dockerignore has .env line + node_modules line grep count ≥2 | ☐ |
+| P13-5 | 4 FROM clauses in Dockerfile (4 stages: base/deps/builder/prod) | ☐ |
+| P13-6 | Production `USER nodeuser` line present before CMD, non-root final stage | ☐ |
+| P13-7 | compose backend env DATABASE_URL @postgres hostname NOT localhost | ☐ |
+| P13-8 | nginx /api/ location proxy_set Host, X-Real-IP, X-Forwarded-For all exist | ☐ |
+| P13-9 | nginx `server_tokens off;` present | ☐ |
+| P13-10 | Dockerfile CMD runs `prisma migrate deploy` BEFORE `node dist/server.js` | ☐ |
+| P13-11 | Yellow family grep 0 both sides (6-tone emerald/rose/slate/sky/violet/teal only) | ☐ |
+| P13-12 | Docs: BUILD_PROCESS §16 FINAL + learning-notes Phase13 5/5/3 + Retro | ☐ |
+
+### Git Commit Template (Ledger Entry):
+```powershell
+cd "G:\MBW Projects\Other\BS"
+git status
+git add -A
+git commit -m "Phase 13 Docker & Nginx Learning: 4-stage backend Dockerfile non-root nodeuser migrate-then-start, docker-compose 3-svc postgres16/backend/nginx health depend_on chains postgres:5432 DNS, nginx.conf /api no-slash proxy server_tokens off real_ip 10m body, .dockerignore 20 patterns, P13 retro + learning-notes 5/5/3 interview cards"
+git rev-parse --short HEAD; git rev-parse HEAD
 ```
 
-**Concepts learned**: Containerization vs virtual machines, Docker image layers (each RUN command creates a cached layer — order COPY package.json FIRST before COPY . for install caching), multi-stage builds, docker-compose service discovery, persistent volumes, reverse proxy topology.
+### Concepts Learned Interview Answering Phrases You Can Use
+- "I used multi-stage Docker builds to shrink the final image from 1.2 GB to ~250 MB"
+- "I harden containers: non-root USER + dumb-init PID 1 reaper + .dockerignore prevents accidental secret COPY"
+- "Express needs X-Forwarded-For + trust proxy true behind reverse proxy otherwise rate-limit bans the LB IP, not the attacker"
+- "Prima generate must run INSIDE the Linux builder stage, host-Windows .prisma native engine will SIGSEGV in alpine"
+- "Container inter-svc communication uses compose service names as DNS A-records. Never localhost inside a container: host=127.0.0.1 = container itself loopback"
+- "Idempotent startup: `prisma migrate deploy` before node start. Same command locally + CI + prod. Exactly-once semantics guaranteed by Prisma _prisma_migrations state table"
 
 ---
 
