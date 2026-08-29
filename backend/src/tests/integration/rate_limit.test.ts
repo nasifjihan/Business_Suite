@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { prisma } from '@/lib/prisma';
 import { seedBaseline, createTestJwt } from '../testUtils';
@@ -13,7 +13,7 @@ describe('Rate Limiting & Security (Integration)', () => {
     (globalThis as any).__FORCE_RATE_LIMIT_TEST__ = true;
     await vi.dynamicImportSettled?.();
     vi.resetModules();
-    const { createApp } = await import('@/app');
+    const { createApp } = await import('../../app.js');
     app = createApp();
     seeded = await seedBaseline(prisma);
     adminJwt = createTestJwt(seeded.admin.id, ['inventory.products.read', 'crm.customers.read'], 'ADMIN');

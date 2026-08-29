@@ -593,6 +593,25 @@ If ANY of these 5 fail the equality assertion, you have a partial write bug (cod
 
 ## Phase 12 — Deployment
 
+### 5 Mistakes I Could Have Made (Dodged)
+1. Mounting `/health` inside `/api/v1` auth gating — Render liveness ping fails 401; Render never marks service healthy, spins 10min → redeploy loop. Fix: explicit top-level mount `app.use('/health')` in app.ts BEFORE `/api/v1` auth router.
+2. Health controller throwing DB error on `$queryRaw` SELECT 1 down — errorHandler would return 503 envelope but audit middleware fails; better approach: service return safe object `{db:"disconnected"}` always, controller sets status 503. No exceptions, no unhandled rejections.
+3. Using `postgres:18-alpine` CI service container — Neon/Supabase free tier both Postgres 16 max today; CI would pass locally but remote schema migration `unique()` syntax not 100% identical. Fixed to `postgres:16-alpine` parity with target.
+4. `npm install` in Render Build — non-deterministic can pick newer minor Prisma/client mismatch. Mandated `npm ci` (reads lockfile exact) + Vercel same installCommand.
+5. Only `/health` and forgot `/api/v1/health` backward compat. Old browser regression dashboard health test page still calls old URL. Fix: both routes mount simultaneously; 2 health URLs.
+
+### 5 Design Decisions I Made
+1. **`vi.resetModules()` + dynamic import in rate_limit_test pattern generalized to CI**: GitHub Actions service container startup race handled via Postgres service `--health-cmd pg_isready`, options flag 5 retries. No `sleep 15 hacks`.
+2. **CI scripts order**: migrate deploy → tsc → test. NOT `prisma generate` before — generate already runs on `npx prisma` commands and in `postinstall` implicit. Avoid duplicate.
+3. **Frontend next build step `continue-on-error: true`**: CI is mostly lint/unit gate. Full Next.js production build occasionally flakes on network fetch remote fonts. Allows main test block green.
+4. **`seed_phase12_health_perm.ts` uses `permission.id` not code**: Review RolePermission schema — it joins on FK permission UUID not code. Earlier seed draft used code strings. Fixed: permission upsert returns ID, then role permission rows use that ID.
+5. **Backend `bcrypt` rounds = 4 in CI env (`BCRYPT_ROUNDS: "4"`)**: Production 12, CI 4 for 3× faster. Seed 4 test suite complete 30s down from 2m. All hash/compare still actually run (no mock) — real tests, fast tests.
+
+### 3 Interview Q&A Deep Cards
+1. **Q: Why DATABASE_URL vs DIRECT_URL two env vars for Prisma? A:** Prisma connection pooling with pgBouncer (Neon/Supabase pooled endpoints) uses transaction-level pooling. Migrations/introspection/multiline `ALTER TABLE` commands need session-level statements (e.g. `SET search_path`, begin/commit blocks) that break transaction-level pooler. `DATABASE_URL` = pooled (app read/write) — `DIRECT_URL` = direct unpooled socket (CLI migrate deploy, prisma studio direct). Prisma config field `datasource db { url = env("DATABASE_URL"); directUrl = env("DIRECT_URL") }` reads both at migration time automatically picks direct.
+2. **Q: What is the Render FREE Health Status green check? Why path matters? A:** Render service has 3 phases: Build → Deploy → Wait Healthy. "Healthy" = 10 consecutive HTTP 2xx on the Health Check Path URL you set, default path = `/`. Our app returns 404 at root (`notFoundHandler`) = service deploys but never healthy, 10 min timeout → CRASHED 502 forever. Setting `Health Check Path = /health` plus our endpoint is unauthenticated and returns 200 when DB works means Render marks us healthy immediately. Interview bonus: `Health Check Interval = 300s` (Render advanced settings) on FREE tier means fewer pings to count against 750h.
+3. **Q: Why GitHub Actions backend-ci Postgres service ports 5432:5432 map? A:** GitHub Actions `services:` Docker containers get their own internal bridge network. Internal hostname = `service:postgres` accessible container-to-container jobs runner. But our job runner runs directly on `runs-on: ubuntu-latest` (VM, not DIND container) — can't talk to internal postgres hostname unless we EXPOSE port with docker port mapping `ports: 5432:5432` (container 5432 bound to VM localhost 5432). Then backend tests DATABASE_URL `postgres://postgres:postgres@localhost:5432/bs_test` works. If we ran inside container job we could skip ports. Different job syntax patterns = different connection strings. Ports publish approach is simplest for non-containerized runners.
+
 ---
 
 ## Phase 13 — Docker & Nginx

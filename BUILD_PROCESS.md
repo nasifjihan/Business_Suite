@@ -2089,9 +2089,24 @@ git rev-parse --short HEAD
 
 ## 15. PHASE 12 — Deployment (Vercel + Render + Managed PostgreSQL)
 
-> **Status**: ⏳ PENDING
+> **Status**: ✅ COMPLETE (editor-side)
+> **Gate checklist**: 16 gates P12-A → P12-15 USER RUN
 
 **Objective**: Make it public on the real internet, for free, using free tiers.
+
+### Infra Written (editor)
+1. **Health module 3 files split**: `backend/src/modules/health/{services.ts,controllers.ts,routes.ts}` + `index.ts` barrel re-export; `/health` TOP LEVEL mount in `app.ts` BEFORE `/api/v1` (for Render liveness 300s pings); compat `/api/v1/health` preserved.
+2. **Health response shape**: `{ status:"ok"|"degraded", uptimeSeconds, db:"connected"|"disconnected", version, timestamp }` — DB errors never throw; return `db:"disconnected"` + `res.status=503` when DB offline. Version read from `package.json` via `fs.readFileSync`.
+3. **1 new permission RBAC additive** (seed file `prisma/seed_phase12_health_perm.ts`): `permission.code = 'system.health.read'` → 7 role tiers Admin/StoreMgr/Acct/HR/Sales/Warehouse/Viewer all get role_permission rows skipDuplicates:true.
+4. **3 new backend package scripts** in `backend/package.json`: `prisma:deploy` (npx prisma migrate deploy), `start:prod` (node dist/server.js), `health:check` (1-line node fetch script).
+5. **FINAL env examples** ≥15 vars backend groups (Server / CORS / DB pooled + direct / JWT 4 / BCrypt / Email 5 / Rate 2 / Tracing 2); frontend 4 NEXT_PUBLIC_ only entries. No real secrets committed.
+6. **Frontend vercel.json**: minimal explicit `framework: "nextjs"`, installCommand `npm ci`, buildCommand `next build`, outputDirectory `.next`.
+7. **GitHub CI 2 yamls** `.github/workflows/{backend-ci, frontend-ci}.yml` both ubuntu-latest, Node 22, npm ci.
+   - Backend workflow: services `postgres:16-alpine` health-checked port 5432; all required env vars DATABASE_URL + JWT secrets (32+ chars) + BCRYPT_ROUNDS=4 fast; steps checkout → setup-node cached npm → prisma migrate deploy → tsc --noEmit → vitest run.
+   - Frontend workflow: NEXT_PUBLIC env; tsc strict → vitest run → next build continue-on-error true.
+8. **Prisma.config.ts** explicit `schema:` path + seed: `[{ run: "npx ts-node prisma/seed.ts" }]`.
+9. **Backend unit test new** `health.test.ts` 3 asserts: 200 public no-Auth /api/v1/health compat same shape; timestamp regex ISO match; uptime>0 numeric; version string non-empty.
+10. YELLOW FAMILY audit zero (6-tone palette emerald/rose/slate/sky/violet/teal only).
 
 ### Free Tier Providers (confirmed available as of 2026, verify current offerings)
 - **Frontend**: Vercel Hobby (free) — deploys Next.js directly from GitHub repo. 100GB bandwidth/month, unlimited projects.
@@ -2101,45 +2116,112 @@ git rev-parse --short HEAD
   - **Supabase**: https://supabase.com — Free tier: 500MB storage, 2GB bandwidth. Includes pgAdmin-like SQL editor.
   - **Render PostgreSQL**: Free tier: 1GB storage, auto-deletes after 90 days — NOT recommended.
 
-### Deployment Steps
+### User Commands A–F (STOP ON FIRST ERROR)
+```powershell
+# A tsc 0
+cd backend; npx tsc --noEmit
+cd ..\frontend; npx tsc --noEmit
+
+# B health route + seed perm
+cd ..\backend
+# Start local backend (another terminal): npm run dev
+curl http://localhost:4000/health                # P12-1 GATE
+# Expected 200: {"success":true,"data":{"status":"ok","uptimeSeconds":...,"db":"connected","version":"1.0.0","timestamp":"..."}}
+
+npx ts-node prisma/seed_phase12_health_perm.ts   # P12-3 GATE 1 perm + 7 rows created
+psql $env:DATABASE_URL -c "SELECT count(*) FROM permission WHERE code='system.health.read';"  # should =1
+
+# C vitest health test
+npm run test -- src/tests/unit/health.test.ts     # P12 tests 3/3
+
+# D yamls valid
+python -c "import yaml; yaml.safe_load(open('.github/workflows/backend-ci.yml')); yaml.safe_load(open('.github/workflows/frontend-ci.yml')); print('OK')"
+# OR just github UI Syntax checker - copy paste yamllint.com
+node -e "JSON.parse(require('fs').readFileSync('frontend/vercel.json')); console.log('vercel.json OK')"
+
+# E scripts check
+cd backend
+npm run prisma:deploy -- --help | Out-Null; echo "script ok"
+npm run health:check 2>&1 | Out-Null; echo "script ok"
+
+# F scripts full suite backend 100%, frontend 100%
+npm run test
+cd ..\frontend; npm run test
+```
+
+### 16 Acceptance Gates Checkboxes
+| # | Gate | Criteria | PASS ☐ |
+|---|---|---|---|
+| P12-A | `backend` tsc --noEmit | 0 errors | ☐ |
+| P12-B | `frontend` tsc --noEmit | 0 errors | ☐ |
+| P12-1 | GET /health → 200, status ok, db:"connected" | `curl http://localhost:4000/health` returns all 5 keys present | ☐ |
+| P12-2 | DB offline simulated → res 503, db:"disconnected", status:"degraded" | 503 code even with success=true (health returns 200-level envelope but code 503) | ☐ |
+| P12-3 | seed_phase12_health_perm → Postgres count: permission=1; role_permission=7 | psql SELECT count(*) → 1; 7 | ☐ |
+| P12-4 | backend/.env.example ≥ 15 env vars | wc -l active lines ≥15 | ☐ |
+| P12-5 | frontend/.env.local.example ≥ 3 entries | ≥ 3 NEXT_PUBLIC_ entries, no secret vars | ☐ |
+| P12-6 | GitHub backend-ci.yml valid steps | Checkout → Node22 → npm ci → prisma migrate deploy → tsc → npm test | ☐ |
+| P12-7 | GitHub frontend-ci.yml valid steps | Checkout → Node22 → npm ci → tsc → vitest → build optional | ☐ |
+| P12-8 | Both CI use node-version 22.x | grep "node-version: 22" 2 hits | ☐ |
+| P12-9 | backend package.json 3 scripts present | prisma:deploy, start:prod, health:check | ☐ |
+| P12-10 | `/health` mounted BEFORE `/api/v1` gating | curl /health no header 200 | ☐ |
+| P12-11 | vercel.json valid JSON | JSON.parse no error | ☐ |
+| P12-12 | 0 real secrets committed | grep repo for sk-/eyJ/pgpass real tokens → 0 | ☐ |
+| P12-13 | P10 CORS fail-closed preserved | Set FRONTEND_URL blank production → server crash | ☐ |
+| P12-14 | Yellow audit 0 hits BOTH sides | greps zero | ☐ |
+| P12-15 | BUILD_PROCESS §15 + learning-notes Phase 12 non-empty | Both sections written ✅ COMPLETE | ☐ |
+
+### Deployment Steps End-to-End
 1. **Push everything to GitHub**: Create new private repo at github.com → push project.
 2. **Set up managed Postgres** (Neon or Supabase):
    - Create new project, database name `business_suite`
-   - Copy the connection string (DATABASE_URL), add query params `?pgbouncer=true&connection_limit=1` (connection pooling)
-   - Run migration against remote DB: `cd backend && DATABASE_URL=postgres://remote... npx prisma migrate deploy`
-   - Run seed: `DATABASE_URL=remote... npx prisma db seed`
+   - Copy pooled connection string (DATABASE_URL), add query params `?pgbouncer=true&connection_limit=1` (connection pooling); copy non-pooled (DIRECT_URL) for migrations
+   - Configure `.env` backend vars: DATABASE_URL, DIRECT_URL
+   - Run migration against remote DB: `cd backend && npx prisma migrate deploy`
+   - Run seed: `npx prisma db seed`; `npx ts-node prisma/seed_phase12_health_perm.ts`
 3. **Deploy Backend to Render**:
    - New → Web Service → Connect GitHub repo
    - Root Directory: `backend`
    - Runtime: Node
-   - Build Command: `npm install && npx prisma generate && npx tsc`
-   - Start Command: `node dist/server.js`
-   - Environment Variables: Paste ALL backend .env vars (NODE_ENV=production, PORT=10000, DATABASE_URL=remote..., JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, ACCESS_TOKEN_EXPIRES_IN, REFRESH_TOKEN_EXPIRES_IN, FRONTEND_URL=https://your-project.vercel.app, COOKIE_DOMAIN=.your-project.vercel.app, RATE_LIMIT vars)
-   - Click "Create Web Service" — wait for deploy. Copy the Render URL e.g. `https://business-suite-api-xyz.onrender.com`
+   - Build Command: `npm ci && npx prisma generate && npm run build`
+   - Start Command: `npm run start:prod`
+   - Environment Variables: Paste ALL backend .env vars `NODE_ENV=production`, `PORT=10000`, `DATABASE_URL`, `DIRECT_URL`, `FRONTEND_URL=https://your-project.vercel.app` pending, `JWT_ACCESS_SECRET ≥32 random`, `JWT_REFRESH_SECRET ≥32 random`, `JWT_ACCESS_TTL_MINUTES=15`, `JWT_REFRESH_TTL_DAYS=7`, `BCRYPT_ROUNDS=12`, Email SMTP 5 vars (or leave blank = fake console emails)
+   - Click "Create Web Service" — wait for deploy. Wait **Health Status = Healthy** (Render will curl /health repeatedly) — copy Render URL e.g. `https://business-suite-api-xyz.onrender.com`
 4. **Deploy Frontend to Vercel**:
    - Add New → Project → Import GitHub repo
    - Root Directory: `frontend`
    - Framework Preset: Next.js (auto-detected)
+   - Node.js Version → Settings → Node 22.x
    - Environment Variables:
      - `NEXT_PUBLIC_API_URL`: `https://business-suite-api-xyz.onrender.com/api/v1`
      - `NEXT_PUBLIC_APP_NAME`: `Business Suite`
    - Click Deploy. Wait. Copy Vercel URL e.g. `https://business-suite-abc.vercel.app`
-5. **Update CORS on Backend**: Go back to Render environment vars → set `FRONTEND_URL=https://business-suite-abc.vercel.app` → trigger a manual redeploy (Clear Build Cache & Deploy).
+5. **Update CORS on Backend**: Go back to Render environment vars → set `FRONTEND_URL=https://business-suite-abc.vercel.app` → Clear Build Cache & Deploy (manual redeploy)
 6. **Smoke test the public deployment**:
    - Open https://business-suite-abc.vercel.app
-   - Login as admin@example.com / Admin@123 (REMINDER: Change this IMMEDIATELY or deactivate this user after demo!)
-   - Check dashboard loads
-   - Try POS → create a sale
-   - If any CORS errors → check backend FRONTEND_URL matches EXACTLY (no trailing slash, correct protocol https://)
-7. **Add custom domain (optional)**: If you own a domain, Vercel and Render both have easy custom domain setup.
+   - Login as admin@test.com / Admin@123 (⚠️ CHANGE THIS ASAP after demo!)
+   - Check dashboard loads, 4 ECharts render
+   - Try POS → create 1 Cash sale → check toast success + Orders list visible
+   - If any CORS errors → check FRONTEND_URL Render var EXACTLY matches, no trailing slash, protocol https://
+7. **Optional GitHub CI**: Open Actions tab in GitHub; Backend CI + Frontend CI green checkmarks.
+
+**Git commit template (ledger)**:
+```powershell
+cd "G:\MBW Projects\Other\BS"
+git status
+git add -A
+git commit -m "Phase 12 Deployment: /health top-level mount, 3-file health module split, seed_phase12 perm system.health.read, CI 2 ymls Postgres16 service Node 22 npm ci cache strict tsc migrate test, 3 new scripts prisma:deploy start:prod health:check, final unified .env examples 17 + 4 vars, frontend vercel.json, 0 yellow, P10 CORS fail-closed preserved"
+git rev-parse --short HEAD
+git rev-parse HEAD
+# paste short + long back for ledger
+```
 
 **Post-deployment considerations**:
 - ⚠️ Render free tier sleeps after 15min. First request may take 30-60 seconds. Explain this in your resume interview: "For production, I'd upgrade to Render's paid tier at $7/month which never sleeps."
-- ⚠️ Seed password `Admin@123` is PUBLIC. Change it OR deactivate all seed users after public demo. Or set a different password in the seed script BEFORE running seed against the production database.
+- ⚠️ Seed password `Admin@123` is PUBLIC. Change it OR deactivate all seed users after public demo. Or set a different password in the seed script BEFORE running seed against production DB.
 - ⚠️ Neon free tier idle timeout: database sleeps after 5 minutes of inactivity, wakes on next query (~5 sec). Another "upgraded tier" interview talking point.
-- ⚠️ Rate limits: Vercel Hobby has 100GB bandwidth/month. Render free has 750 hours/month (which means exactly ONE free service running 24/7 — perfect).
+- ⚠️ Rate limits: Vercel Hobby has 100GB bandwidth/month. Render free has 750 hours/month (exactly ONE free service 24/7 — perfect).
 
-**Concepts learned**: Environment separation (dev vs prod), managed databases vs self-hosted, CORS origin configuration for multiple domains, connection pooling for serverless/PaaS environments (Prisma + pgbouncer), HTTPS-by-default platforms, CI/CD pipelines (Vercel/Render auto-deploy on git push to main).
+**Concepts learned**: GitHub Actions service containers (Postgres health-checked on localhost ports); Prisma DATABASE_URL pooled + DIRECT_URL unpooled separation for pgBouncer; Render Health Check Path must be `/health` not default 404 root; Vercel npm ci ≠ npm install (lockfile strict determinism); Health endpoint 200 envelope but status 503 when DB offline (RumblePack pattern: always envelope success even on errors); Render PORT env 10000 default not 4000; CI continue-on-error for optional frontend build step, strict tsc + test as blockable.
 
 ---
 

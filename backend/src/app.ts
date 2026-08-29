@@ -23,6 +23,7 @@ import { auditLogger } from "./middleware/auditLogger";
 import { notFoundHandler } from "./middleware/notFound";
 import { errorHandler } from "./middleware/errorHandler";
 import { apiV1Router } from "./routes";
+import { healthRouter } from "./modules/health";
 
 export function createApp() {
   if (
@@ -77,6 +78,8 @@ export function createApp() {
 
   // 6. Audit logger (records after res finish)
   app.use(auditLogger);
+
+  app.use("/health", healthRouter);
 
   // 7. API routes
   app.use("/api/v1", apiV1Router);

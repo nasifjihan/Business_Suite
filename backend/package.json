@@ -14,7 +14,10 @@
     "test:unit": "vitest run src/tests/unit",
     "test:integration": "vitest run src/tests/integration",
     "test:coverage": "vitest run --coverage",
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "prisma:deploy": "prisma migrate deploy",
+    "start:prod": "node dist/server.js",
+    "health:check": "node -e \"fetch('http://localhost:'+(process.env.PORT||4000)+'/health').then(r=>r.json()).then(j=>console.log(JSON.stringify(j,null,2))).catch(e=>{console.error('DOWN:', e.message); process.exit(1);})\""
   },
   "keywords": [
     "express",
