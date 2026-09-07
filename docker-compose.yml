@@ -76,7 +76,13 @@ services:
     ports:
       - "80:80"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/health > /dev/null || exit 1"]
+      # 127.0.0.1, NOT localhost. Inside the container /etc/hosts maps localhost
+      # to both 127.0.0.1 and ::1, and busybox wget tries the IPv6 address first.
+      # nginx here listens on 0.0.0.0:80 (IPv4 only, per "listen 80" in nginx.conf),
+      # so the ::1 attempt is refused and the container is marked unhealthy even
+      # though it proxies perfectly from the host. The backend healthcheck can use
+      # localhost because Node binds dual-stack :: by default; nginx does not.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health > /dev/null || exit 1"]
       interval: 30s
       timeout: 3s
       retries: 5

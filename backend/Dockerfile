@@ -10,9 +10,22 @@ RUN apk add --no-cache dumb-init openssl \
   && addgroup -S nodegrp \
   && adduser -S nodeuser -G nodegrp
 
+# npm network tuning. The default 5-minute fetch timeout and 2 retries are not
+# enough on a slow or unstable link: `npm ci` pulls the whole dependency tree,
+# and BuildKit runs the deps and production stages in PARALLEL, so two npm
+# processes compete for the same bandwidth. Symptom without this:
+#   npm error code EIDLETIMEOUT / Idle timeout reached for host registry.npmjs.org
+# maxsockets is lowered deliberately - fewer concurrent connections is FASTER on
+# a constrained link, because each gets a usable share of the bandwidth instead
+# of all of them stalling into an idle timeout.
 ENV NODE_ENV=production \
   NPM_CONFIG_FUND=false \
-  NPM_CONFIG_AUDIT=false
+  NPM_CONFIG_AUDIT=false \
+  NPM_CONFIG_FETCH_TIMEOUT=1800000 \
+  NPM_CONFIG_FETCH_RETRIES=5 \
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=180000 \
+  NPM_CONFIG_MAXSOCKETS=3
 
 WORKDIR /app
 RUN chown -R nodeuser:nodegrp /app

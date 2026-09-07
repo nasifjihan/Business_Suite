@@ -20,6 +20,12 @@ jobs:
     env:
       NODE_ENV: test
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/bs_test?schema=public
+      # Tests run against this. Required here because vitest.config.ts would
+      # otherwise derive "<db>_test" from DATABASE_URL (i.e. bs_test_test),
+      # which does not exist in CI. The CI database is created and destroyed
+      # per run, so pointing tests at the same one is safe here - unlike on a
+      # developer machine, where it would wipe their working data.
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/bs_test?schema=public
       PORT: 4000
       FRONTEND_URL: http://localhost:3000
       JWT_ACCESS_SECRET: ci-access-secret-ci-access-secret-ci-access-secret-32ch

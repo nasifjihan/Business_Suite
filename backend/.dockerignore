@@ -1,0 +1,29 @@
+# Docker reads .dockerignore from the BUILD CONTEXT root.
+# Our context is ./backend, so this file MUST live here — the one at the
+# repo root is never consulted for this build.
+
+# The big one: ~100k files the image never needs.
+# The Dockerfile runs `npm ci` itself to build a clean, platform-correct tree.
+node_modules
+
+# Build output. The builder stage compiles this fresh inside the image;
+# copying in a Windows-built dist/ would be stale at best.
+dist
+
+# Secrets must never enter an image layer. Layers are cached and pushed.
+.env
+.env.*
+
+# Tests aren't needed to build the image (tsconfig.build.json excludes them)
+src/tests
+vitest.config.ts
+coverage
+
+# Noise
+.git
+.gitignore
+*.log
+npm-debug.log*
+.vscode
+.idea
+*.swp

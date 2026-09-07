@@ -8,6 +8,37 @@ import { resetDatabase } from "./testUtils";
 
 applyBcryptMock();
 
+/**
+ * SAFETY GUARD — do not remove.
+ *
+ * afterEach() below calls resetDatabase(), which deleteMany()s ~25 tables.
+ * Pointed at the wrong database that silently destroys real data. This
+ * refuses to run unless the target database name contains "test".
+ *
+ * vitest.config.ts is what selects the database (TEST_DATABASE_URL, or
+ * "<database>_test" derived from DATABASE_URL). This is the second line of
+ * defence in case that is ever bypassed or misconfigured.
+ */
+(() => {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("Tests aborted: DATABASE_URL is not set.");
+  const dbName = (() => {
+    try {
+      return new URL(url).pathname.slice(1);
+    } catch {
+      return "";
+    }
+  })();
+  if (!/test/i.test(dbName)) {
+    throw new Error(
+      `Tests aborted: refusing to run against database "${dbName}", whose name ` +
+        `does not contain "test". resetDatabase() would DELETE every row in it. ` +
+        `Set TEST_DATABASE_URL to a dedicated test database.`
+    );
+  }
+})();
+
+
 vi.mock("express-rate-limit", async () => {
   const actual =
     await vi.importActual<typeof import("express-rate-limit")>(
