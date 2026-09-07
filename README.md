@@ -1,6 +1,6 @@
 # Business Suite — Full-Stack B2B Business Management
 
-A single-organization business management suite with Authentication, RBAC, CRM, Inventory, POS & Sales, HRM, and Dashboard Analytics. Built as a learning-oriented portfolio project using **Next.js 15 (App Router)**, **Express 4.21**, **TypeScript 5**, **Prisma ORM**, and **PostgreSQL 16/18**.
+A single-organization business management suite with Authentication, RBAC, CRM, Inventory, POS & Sales, HRM, and Dashboard Analytics. Built as a learning-oriented portfolio project using **Next.js 16 (App Router)**, **Express 4.21**, **TypeScript 5**, **Prisma ORM**, and **PostgreSQL 16/18**.
 
 ---
 
@@ -9,7 +9,7 @@ A single-organization business management suite with Authentication, RBAC, CRM, 
 ```
                   ┌──────────────────────────────┐
                   │   BROWSER                  │
-                  │   Next.js 15 Frontend │
+                  │   Next.js 16 Frontend │
                   │   React 19, Tailwind  │
                   └────────────┬───────────┘
                                │ HTTPS + JWT (Header)
@@ -27,7 +27,7 @@ A single-organization business management suite with Authentication, RBAC, CRM, 
                   ┌──────────────────────────────┐
                   │   DATABASE                 │
                   │   PostgreSQL 16/18        │
-                  │   28 tables, UUID PKs,       │
+                  │   30 tables, UUID PKs,       │
                   │   Decimal currency,      │
                   │   B-tree indexes        │
                   └──────────────────────────────┘
@@ -44,8 +44,8 @@ A single-organization business management suite with Authentication, RBAC, CRM, 
 ### Frontend
 | Category | Tools |
 |----------|-------|
-| Framework | Next.js 15 (App Router), React 19, TypeScript 5 |
-| Styling | Tailwind CSS 3, shadcn/ui primitives (Radix UI) |
+| Framework | Next.js 16 (App Router), React 19, TypeScript 5 |
+| Styling | Tailwind CSS 4, shadcn/ui primitives (Radix UI) |
 | State | Redux Toolkit (UI state), RTK Query (API server state + cache) |
 | Tables | TanStack React Table (server-side pagination, sort, filter, select) |
 | Forms | React Hook Form + Zod resolvers |
@@ -66,7 +66,7 @@ A single-organization business management suite with Authentication, RBAC, CRM, 
 |-------|-------|
 | Backend unit/integration | Vitest + Supertest |
 | Frontend unit | Vitest + React Testing Library + jsdom |
-| End-to-end | Playwright |
+| End-to-end | _Not implemented._ Planned as Playwright; there is no config or spec file in the repo today. Coverage is backend Vitest + Supertest and frontend Vitest + RTL. |
 
 ---
 
@@ -183,7 +183,7 @@ business-suite/
 ├── README.md              ← This file
 ├── docker-compose.yml     ← Phase 13 (Docker learning: postgres+backend+nginx)
 ├── .gitignore
-├── frontend/              ← Next.js 15 frontend app
+├── frontend/              ← Next.js 16 frontend app
 ├── backend/               ← Express 4.21 + Prisma REST API
 ├── docs/                  ← Architecture/Database/API/RBAC/Learning docs
 └── nginx/                 ← Phase 13 (Nginx reverse proxy learning)

@@ -32,6 +32,8 @@ const envSchema = z.object({
     .string()
     .default("100")
     .refine((v) => !Number.isNaN(parseInt(v, 10))),
+  // Local-development escape hatch (see CONFIG.rateLimit.disabled below).
+  DISABLE_RATE_LIMIT: z.string().default("false"),
 });
 
 const raw = envSchema.safeParse(process.env);
@@ -65,6 +67,14 @@ export const CONFIG = {
   rateLimit: {
     windowMs: parseInt(raw.data.RATE_LIMIT_WINDOW_MS, 10),
     max: parseInt(raw.data.RATE_LIMIT_MAX, 10),
+    // Bypass every limiter while clicking through the UI by hand in dev.
+    // Double-guarded: the flag ALONE is not enough — NODE_ENV must also be
+    // "development", so a stray DISABLE_RATE_LIMIT=true in a deployed
+    // environment can never remove the brute-force shield from /auth/login.
+    // Deliberately false under NODE_ENV=test: the suite controls limiter
+    // behaviour itself via the express-rate-limit mock in src/tests/setup.ts.
+    disabled:
+      raw.data.NODE_ENV === "development" && raw.data.DISABLE_RATE_LIMIT === "true",
   },
 } as const;
 

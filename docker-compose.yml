@@ -12,7 +12,13 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Host 5433 -> container 5432. Your machine already runs a local
+      # PostgreSQL 18 on 5432, and two processes cannot bind the same host
+      # port: publishing 5432:5432 makes `docker compose up` fail with
+      # "port is already allocated". The container-side port stays 5432, so
+      # the backend service still connects to postgres:5432 over bsnet.
+      # Connect from the host with: psql -h localhost -p 5433 -U postgres
+      - "${POSTGRES_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bs_db}"]
       interval: 5s
@@ -36,20 +42,17 @@ services:
       PORT: 4000
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bs_db}?schema=public&pgbouncer=false
-      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bs_db}?schema=public
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-insecure-access-secret-change-me-phase-13-local-only-aaaaaaaaaaaaaaaa}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-insecure-refresh-secret-change-me-phase-13-local-only-bbbbbbbbbbbbbbbb}
-      JWT_ACCESS_EXPIRES_IN: 15m
-      JWT_REFRESH_EXPIRES_IN: 7d
-      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
-      EMAIL_FROM: noreply@example.com
-      EMAIL_HOST: 127.0.0.1
-      EMAIL_PORT: "1025"
-      EMAIL_USER: ""
-      EMAIL_PASS: ""
-      EMAIL_SECURE: "false"
+      # Names below must match the Zod schema in backend/src/config/env.ts.
+      # JWT_ACCESS_EXPIRES_IN / BCRYPT_ROUNDS / EMAIL_* / RATE_LIMIT_LOGIN_MAX
+      # were not in that schema, so the container silently ran on defaults.
+      ACCESS_TOKEN_EXPIRES_IN: 15m
+      REFRESH_TOKEN_EXPIRES_IN: 7d
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       RATE_LIMIT_WINDOW_MS: "900000"
-      RATE_LIMIT_LOGIN_MAX: "10"
+      RATE_LIMIT_MAX: "100"
+      DISABLE_RATE_LIMIT: "false"
     ports:
       - "4000:4000"
     healthcheck:

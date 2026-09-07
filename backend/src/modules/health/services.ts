@@ -10,9 +10,23 @@ export class HealthService {
     version: string;
     timestamp: string;
   }> {
-    const packageJsonPath = resolve(__dirname, "../../../../package.json");
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-    const version: string = packageJson.version || "0.0.0";
+    // __dirname is <backend>/src/modules/health under ts-node (dev/test) and
+    // <backend>/dist/modules/health in production. tsconfig.build.json sets
+    // rootDir: "src", so dist/ mirrors src/ and this depth is correct in BOTH.
+    // (It was "../../../../" before, which pointed one level ABOVE backend/ —
+    // there is no package.json there, so readFileSync threw and /health 500'd.)
+    //
+    // The try/catch matters independently: a health probe must never fail because
+    // of a missing version string. Docker HEALTHCHECK and Render both read any
+    // non-2xx as "this container is dead" and will restart or refuse to route to it.
+    let version = "0.0.0";
+    try {
+      const packageJsonPath = resolve(__dirname, "../../../package.json");
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+      version = packageJson.version || "0.0.0";
+    } catch {
+      version = process.env.npm_package_version || "0.0.0";
+    }
 
     const uptimeSeconds = Math.round(process.uptime());
 

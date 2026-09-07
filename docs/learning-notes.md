@@ -682,3 +682,167 @@ If ANY of these 5 fail the equality assertion, you have a partial write bug (cod
 - **Deployment** GitHub Actions 2 yamls backend-ci / frontend-ci ubuntu-latest node 22 services postgres:16-alpine health pg_isready, npm ci (strict lockfile), npx prisma migrate deploy → tsc → vitest. Render /health unauthenticated top-level mount (not 401) for Render healthy status.
 - **Docker multi-stage 250 MB final alpine image** (non-root user + dumb-init + 4-stage deps/builder separation, compose service DNS @postgres, Nginx no-slash proxy_pass with X-Forwarded-For real IP chain, 12 Docker/Nginx interview deep cards).
 
+
+---
+
+## Phase 14 — Production Readiness Audit
+
+The first end-to-end audit of the finished project: build it clean, boot the
+compiled output, run the container. Nine bugs, none of which type checking or the
+test suite could see. Full write-up in `BUILD_PROCESS.md` section 17.
+
+### Mistakes during implementation:
+
+1. **Believed a green test suite meant the app worked.** 42 backend tests passed
+   while `node dist/server.js` crashed on the first `require`. Tests import from
+   `src/` through ts-node; they never touch `dist/`. **Unit tests verify logic, not
+   deployability.** The two are independent, and only one of them was being checked.
+2. **`rootDir: "."` silently moved the build output.** `include` covered both
+   `src/**` and `prisma/**`, so TypeScript picked the common ancestor as the root and
+   emitted `dist/src/server.js`. Meanwhile `package.json` and the Dockerfile both
+   said `dist/server.js`. Nothing errored — `tsc` succeeded, the file just wasn't
+   where anyone expected. Fixed with a separate `tsconfig.build.json`.
+3. **Assumed `paths` aliases work at runtime.** They do not. `tsconfig.json` `paths`
+   is a *type-checker* instruction; `tsc` emits `require("@/lib/errors")` unchanged
+   and Node cannot resolve it. Dev worked only because of the `-r tsconfig-paths/register`
+   flag on `ts-node-dev`, which `npm start` doesn't have and the production image
+   can't have (it's a devDependency, stripped by `--omit=dev`). 260 imports affected.
+   Fixed with `tsc-alias` in the build step.
+4. **Let a health endpoint throw.** `readFileSync` on a wrong relative path made
+   `/health` return 500. Because `docker-compose.yml` gates nginx on
+   `backend: condition: service_healthy`, a missing *version string* was enough to
+   stop the entire stack from coming up. Health endpoints must never fail for a
+   reason unrelated to health.
+5. **Let four files drift from the env schema.** `.env.example`, `backend-ci.yml`,
+   and `docker-compose.yml` all set variable names (`JWT_ACCESS_TTL_MINUTES`,
+   `BCRYPT_ROUNDS`, `EMAIL_*`, `RATE_LIMIT_LOGIN_MAX`, `DIRECT_URL`) that
+   `src/config/env.ts` never reads. Zod's `z.object()` ignores unknown keys, so
+   there was no error anywhere — the app just quietly used defaults. Silent config
+   failure is much more expensive to find than a crash.
+6. **Edited a production security constant for local convenience.** Bumped
+   `authStrictLimiter.max` from 10 to 20 to stop hitting the limiter while testing
+   the login form by hand. That left code, comment, and test disagreeing, and the
+   integration test failed. Replaced with a `DISABLE_RATE_LIMIT` flag that only
+   works when `NODE_ENV=development`.
+7. **Copied the wrong Prisma files into the Docker image — in both directions.**
+   First `prisma.config.ts` was missing from the production stage, so
+   `prisma migrate deploy` had no datasource url and the container crash-looped.
+   Then adding it to the *builder* stage broke `docker build`, because the file
+   calls `env("DATABASE_URL")` and that variable is (correctly) absent at build
+   time. It belongs in exactly one stage: production.
+8. **Shipped the Prisma CLI as a devDependency while the container ran migrations
+   at startup.** `npm ci --omit=dev` stripped it, so `npx prisma migrate deploy`
+   was downloading the CLI from the network on every container boot.
+9. **Published `5432:5432` in compose on a machine already running PostgreSQL 18.**
+   Two processes cannot bind the same host port. Remapped to `5433:5432`.
+10. **Tolerated a flaky test and a decorative CI step.** `GlobalTable` timed out at
+    5s under parallel load but passed alone; `frontend-ci.yml` had
+    `continue-on-error: true` on the build step, so a broken build could not fail
+    the pipeline.
+
+### Key decisions:
+
+1. **Split `tsconfig.json` (type-check) from `tsconfig.build.json` (emit).** One
+   config cannot serve both well: type checking wants maximum coverage (seeds,
+   tests), emit wants the minimum that ships. The split also stopped `dist/src/tests/`
+   from being baked into the production image.
+2. **`tsc-alias` over `tsconfig-paths` at runtime.** Rewriting aliases at build time
+   costs nothing at runtime and adds no production dependency. Registering a loader
+   hook in production means every import resolves through a patched resolver, and it
+   requires promoting a devDependency to a dependency.
+3. **Made the health endpoint defensive, not just correct.** Fixed the path *and*
+   wrapped it in `try/catch`. Correctness stops today's bug; the `try/catch` stops
+   the whole class of them, because orchestrators treat any non-2xx as death.
+4. **Double-guarded the rate-limit bypass.** `DISABLE_RATE_LIMIT=true` alone does
+   nothing — `NODE_ENV` must also be `development`. A convenience flag that can
+   weaken production is not a convenience, it's a vulnerability.
+5. **Made the flag inert under `NODE_ENV=test`.** The suite already neutralises
+   limiters via the `express-rate-limit` mock in `src/tests/setup.ts`. Two mechanisms
+   controlling one switch is a flaky-test generator.
+6. **Moved `prisma` to `dependencies`, deliberately.** Normally the CLI is a
+   devDependency. It is a dependency *here* specifically because the container's
+   `CMD` runs `prisma migrate deploy` at startup. The rule follows the runtime need,
+   not the convention.
+7. **Deleted `DIRECT_URL` rather than wiring it up.** Under Prisma 7 the datasource
+   url comes from `prisma.config.ts`, which reads `DATABASE_URL` only. Keeping a dead
+   variable in three files teaches a false pattern. If a pooled provider later needs
+   a direct migration connection, add it to `prisma.config.ts` first, then document it.
+
+### Interview Q&A (study cards for resume):
+
+**Q: Your tests pass and `tsc` is clean. Why might the app still not start in production?**
+A: Neither one executes the deployed artifact. `tsc --noEmit` type-checks source and
+emits nothing; tests import from `src/` through a TypeScript loader. Both miss
+anything that only exists in the compiled output — wrong `outDir`/`rootDir` layout,
+unresolved path aliases, missing runtime files, or a start command pointing at a file
+that isn't there. The only way to catch these is to run `node dist/server.js`, and to
+actually run the container rather than just build it.
+
+**Q: What is the difference between `rootDir` and `outDir` in tsconfig?**
+A: `outDir` is where output goes. `rootDir` is the base that determines the folder
+structure *inside* `outDir` — TypeScript preserves each file's path relative to
+`rootDir`. If `rootDir` is `.` and you compile `src/server.ts`, you get
+`dist/src/server.js`; with `rootDir: "src"` you get `dist/server.js`. When `include`
+spans multiple top-level folders, TypeScript infers the common ancestor as the root,
+which is how the layout can change without you touching `rootDir` at all.
+
+**Q: Do `paths` aliases in tsconfig work at runtime?**
+A: No. `paths` only tells the type checker how to resolve an import. `tsc` emits the
+specifier verbatim, so `require("@/lib/prisma")` reaches Node unchanged and fails —
+Node looks for a package by that name in `node_modules`. You need either a build-time
+rewrite (`tsc-alias`) or a runtime resolver (`-r tsconfig-paths/register`, or Node's
+native `imports` field with `#` specifiers). `tsc-alias` is preferable for a
+production service: zero runtime cost, nothing extra to install in the image.
+
+**Q: Why should a health endpoint never throw?**
+A: Because orchestrators read any non-2xx as "this instance is dead." Docker
+`HEALTHCHECK`, Kubernetes liveness probes, and Render all restart or stop routing to
+a service that fails one. In this project the endpoint 500'd because it couldn't read
+a version string off disk — cosmetic — and since compose gated nginx on
+`backend: condition: service_healthy`, the reverse proxy never started. Report
+degraded dependencies inside a 200 body, or use a specific code like 503, but never
+let an unrelated exception decide.
+
+**Q: Why did `docker build` succeed while the container crash-looped?**
+A: They exercise different things. `docker build` runs the `RUN` layers — install,
+generate, compile. The `CMD` never executes during a build. So anything that only
+happens at startup (a missing config file, a CLI stripped by `--omit=dev`, an env var
+absent at run time) is invisible until `docker run`. A successful build tells you the
+image assembled, not that it works.
+
+**Q: Why must `DATABASE_URL` be absent during `docker build`?**
+A: Image layers are cached, shared between environments, and pushed to registries.
+Anything baked into one is effectively public and permanent. Configuration —
+connection strings, secrets, per-environment values — belongs at run time, so the
+same image can be promoted from dev to staging to prod with only env vars changing.
+If a build step needs your database, the design is wrong: `prisma generate` only
+needs the schema file; `prisma migrate deploy` needs the database, which is why it
+runs in `CMD` at startup instead.
+
+**Q: In `ports: "5433:5432"`, what does each number mean?**
+A: `HOST:CONTAINER`. `5433` is on the host and must be free — this machine already
+runs PostgreSQL 18 on 5432, so publishing `5432:5432` fails with "port is already
+allocated." `5432` is inside the container, in its own network namespace, so it never
+conflicts with anything. Critically, containers on the same Docker network reach each
+other by **service name and container port** and ignore the published mapping
+entirely: the backend connects to `postgres:5432`, while from Windows you connect to
+`localhost:5433` — the same database, two different addresses.
+
+**Q: Should `prisma` be a dependency or a devDependency?**
+A: Normally a devDependency — it's the CLI (`migrate`, `generate`, `studio`), while
+`@prisma/client` is the runtime query API and is always a dependency. The exception is
+when the production container runs migrations at startup, as this one does via
+`CMD ["sh","-c","npx prisma migrate deploy && node dist/server.js"]`. With
+`npm ci --omit=dev`, a devDependency CLI is absent, so `npx` downloads it from the
+network on every boot — slow, and broken in an offline environment. Let the runtime
+requirement decide, not the convention.
+
+**Q: A test passes alone but fails in the full suite. What do you do?**
+A: Find out whether it's a real ordering/shared-state bug or a timing artifact. Here
+`GlobalTable` was pure timing: jsdom plus Testing Library role queries are slow on a
+cold worker, and parallel suite startup pushed the first test past the 5s default, so
+raising `testTimeout` was the right fix. If it had been shared state — a leaked
+module singleton, an unreset database, a global set by another file — a longer timeout
+would only have hidden it. The one unacceptable option is leaving it flaky: a suite
+that goes red at random trains everyone to ignore red.
+

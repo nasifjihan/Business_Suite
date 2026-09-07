@@ -1,0 +1,21 @@
+{
+  // Production build config.
+  //
+  // Why this exists separately from tsconfig.json:
+  //   tsconfig.json  -> used for TYPE CHECKING (`tsc --noEmit`). It includes
+  //                     prisma/*.ts seed scripts and src/tests/** so CI checks them.
+  //   this file      -> used for EMITTING dist/. It compiles ONLY src/, so that:
+  //                       1. rootDir "src" makes dist/ mirror src/ exactly, which
+  //                          means dist/server.js (what package.json + Dockerfile
+  //                          expect) instead of dist/src/server.js.
+  //                       2. __dirname-relative paths resolve to the same depth in
+  //                          dev (ts-node on src/) and prod (node on dist/).
+  //                       3. Test files and mocks never ship inside the Docker image.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/tests/**"]
+}

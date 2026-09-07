@@ -38,6 +38,12 @@ FROM deps AS builder
 
 COPY --chown=nodeuser:nodegrp prisma/ ./prisma/
 COPY --chown=nodeuser:nodegrp src/ ./src/
+# NOTE: prisma.config.ts is deliberately NOT copied into this stage.
+# It calls env("DATABASE_URL"), which throws when the variable is absent — and
+# it is absent during `docker build`, as it should be (never bake a database URL
+# into an image layer). `prisma generate` only needs prisma/schema.prisma, which
+# it finds by convention. The config file is copied into the production stage
+# instead, where DATABASE_URL is supplied at run time.
 
 RUN npx prisma generate \
   && npm run build
@@ -56,6 +62,11 @@ COPY --chown=nodeuser:nodegrp --from=builder /app/node_modules/.prisma ./node_mo
 COPY --chown=nodeuser:nodegrp --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --chown=nodeuser:nodegrp --from=builder /app/dist ./dist
 COPY --chown=nodeuser:nodegrp prisma/ ./prisma/
+# Required by `prisma migrate deploy` in the CMD below: under Prisma 7 the
+# datasource url lives here, not in schema.prisma. Without it the container
+# crash-loops with "The datasource.url property is required in your Prisma
+# config file when using prisma migrate deploy."
+COPY --chown=nodeuser:nodegrp prisma.config.ts ./
 
 ENV PORT=4000
 EXPOSE 4000

@@ -20,19 +20,19 @@ jobs:
     env:
       NODE_ENV: test
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/bs_test?schema=public
-      DIRECT_URL: postgres://postgres:postgres@localhost:5432/bs_test?schema=public
       PORT: 4000
       FRONTEND_URL: http://localhost:3000
       JWT_ACCESS_SECRET: ci-access-secret-ci-access-secret-ci-access-secret-32ch
       JWT_REFRESH_SECRET: ci-refresh-secret-ci-refresh-secret-ci-refresh-secret-ci-32ch
-      JWT_ACCESS_TTL_MINUTES: "15"
-      JWT_REFRESH_TTL_DAYS: "7"
-      BCRYPT_ROUNDS: "4"
-      EMAIL_FROM: noreply@test.com
-      EMAIL_HOST: localhost
-      EMAIL_PORT: "1025"
-      EMAIL_USER: ""
-      EMAIL_PASS: ""
+      # Names must match the Zod schema in backend/src/config/env.ts.
+      # The old JWT_ACCESS_TTL_MINUTES / BCRYPT_ROUNDS / EMAIL_* names were not
+      # in that schema, so CI was silently falling back to schema defaults.
+      ACCESS_TOKEN_EXPIRES_IN: 15m
+      REFRESH_TOKEN_EXPIRES_IN: 7d
+      COOKIE_DOMAIN: localhost
+      RATE_LIMIT_WINDOW_MS: "900000"
+      RATE_LIMIT_MAX: "100"
+      DISABLE_RATE_LIMIT: "false"
     steps:
       - uses: actions/checkout@v4
       - name: Use Node.js 22

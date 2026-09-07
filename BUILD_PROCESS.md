@@ -22,13 +22,14 @@
 14. [PHASE 11 — Testing (Vitest, Supertest, Playwright)](#14-phase-11--testing-vitest-supertest-playwright)
 15. [PHASE 12 — Deployment (Vercel + Render + Managed PostgreSQL)](#15-phase-12--deployment-vercel--render--managed-postgresql)
 16. [PHASE 13 — Docker & Nginx Learning](#16-phase-13--docker--nginx-learning)
-17. [FULL TECHNOLOGY STACK REFERENCE](#17-full-technology-stack-reference)
-18. [COMPLETE FOLDER STRUCTURE TREE](#18-complete-folder-structure-tree)
-19. [ENVIRONMENT VARIABLE REFERENCE](#19-environment-variable-reference)
-20. [DATABASE ENTITY RELATIONSHIP DIAGRAM (TEXT)](#20-database-entity-relationship-diagram-text)
-21. [API ENDPOINT CHEAT SHEET](#21-api-endpoint-cheat-sheet)
-22. [LEARNING NOTES & KEY DECISIONS](#22-learning-notes--key-decisions)
-23. [INTERVIEW PREP — ANSWERS TO LIKELY QUESTIONS](#23-interview-prep--answers-to-likely-questions)
+17. [PHASE 14 — Production Readiness Audit](#17-phase-14--production-readiness-audit)
+18. [FULL TECHNOLOGY STACK REFERENCE](#18-full-technology-stack-reference)
+19. [COMPLETE FOLDER STRUCTURE TREE](#19-complete-folder-structure-tree)
+20. [ENVIRONMENT VARIABLE REFERENCE](#20-environment-variable-reference)
+21. [DATABASE ENTITY RELATIONSHIP DIAGRAM (TEXT)](#21-database-entity-relationship-diagram-text)
+22. [API ENDPOINT CHEAT SHEET](#22-api-endpoint-cheat-sheet)
+23. [LEARNING NOTES & KEY DECISIONS](#23-learning-notes--key-decisions)
+24. [INTERVIEW PREP — ANSWERS TO LIKELY QUESTIONS](#24-interview-prep--answers-to-likely-questions)
 
 ---
 
@@ -2304,7 +2305,414 @@ git rev-parse --short HEAD; git rev-parse HEAD
 
 ---
 
-## 17. FULL TECHNOLOGY STACK REFERENCE
+## 17. PHASE 14 — PRODUCTION READINESS AUDIT
+
+> **Why this phase exists**: Phases 0–13 were written and verified module by module.
+> Phase 14 was the first time the project was checked *as a whole* — build it clean,
+> boot the compiled output, and run the container. Everything below is a bug that
+> `tsc --noEmit` and the test suite could not see, because **type checking and unit
+> tests never execute the artifact you actually deploy.**
+>
+> That is the single biggest lesson of this phase. Green tests told us the *logic*
+> was right. They said nothing about whether the thing that ships can start.
+
+---
+
+### 17.1 The state before the audit
+
+| Check | Result |
+|---|---|
+| `tsc --noEmit` (backend + frontend) | clean |
+| `next build` | success, 44 routes |
+| Prisma migrations | in sync, 30 tables |
+| Backend tests | 42 passed / **6 failed** |
+| Frontend tests | 43 passed / **1 failed** |
+| **`node dist/server.js`** | **crashed instantly** |
+| **`docker compose up`** | **backend crash-looped, nginx never started** |
+
+Nine distinct problems were found and fixed. They are grouped below by the lesson
+each one teaches.
+
+---
+
+### 17.2 Bug 1 — The compiled output was in the wrong place
+
+**Symptom**: `npm start` and the Dockerfile `CMD` both ran `node dist/server.js`.
+That file did not exist. The build actually produced `dist/src/server.js`.
+
+**Cause**: `tsconfig.json` had `rootDir: "."` with `include: ["src/**/*.ts", "prisma/**/*.ts"]`.
+TypeScript preserves the folder structure *below `rootDir`* in the output. With
+`rootDir` at the project root, `src/server.ts` compiled to `dist/src/server.js`.
+
+**The rule to remember**: `outDir` says *where* output goes; `rootDir` says *what
+the paths inside it look like*. `rootDir` must point at the common ancestor of the
+files you want mirrored. Point it at `src`, and `src/server.ts` → `dist/server.js`.
+
+**Fix**: introduced `backend/tsconfig.build.json`, a build-only config:
+
+```jsonc
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/tests/**"]
+}
+```
+
+`tsconfig.json` stays as the **type-checking** config (it still covers
+`prisma/*.ts` seeds and `src/tests/**`, so CI checks them). `tsconfig.build.json`
+is the **emit** config. This split bought three things at once:
+
+1. `dist/server.js` — matching what `package.json` and the Dockerfile already expected.
+2. `dist/` now mirrors `src/` exactly, so any `__dirname`-relative path resolves to
+   the same depth in dev and in production. (This directly caused Bug 3.)
+3. Test files and mocks stopped being compiled into the production Docker image.
+   Before this, `dist/src/tests/` shipped to production — dead weight, and it
+   widens the attack surface for no benefit.
+
+> The Dockerfile already had `COPY tsconfig.json tsconfig.build.json* ./` — the
+> split was planned during Phase 13 but never finished. The `*` made the missing
+> file silently optional, which is why nothing complained.
+
+---
+
+### 17.3 Bug 2 — Path aliases do not survive compilation
+
+**Symptom**: even at the correct path, the compiled server died immediately:
+
+```
+Error: Cannot find module '@/lib/errors'
+Require stack:
+- backend/dist/middleware/auth.js
+```
+
+**Cause**: the codebase uses `@/` aliases in **260 imports**
+(`import { prisma } from "@/lib/prisma"`). The alias is declared in
+`tsconfig.json` under `paths`.
+
+Here is the part that surprises almost everyone learning TypeScript:
+
+> **`paths` is a compile-time-only instruction. It tells the type checker where to
+> look. It does NOT rewrite the emitted JavaScript.**
+
+`tsc` emits `require("@/lib/errors")` verbatim. Node has never heard of `@/`, so it
+looks for a package named `@/lib/errors` in `node_modules` and fails.
+
+Development worked only because the dev script loads a runtime resolver:
+
+```
+ts-node-dev ... -r tsconfig-paths/register src/server.ts
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^ this is what made @/ work
+```
+
+`npm start` had no such flag — and `tsconfig-paths` is a **devDependency**, so it
+isn't even installed in the production image (`npm ci --omit=dev`).
+
+**Fix**: added `tsc-alias`, which post-processes the emitted JS and rewrites each
+alias into a real relative path:
+
+```json
+"build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json"
+```
+
+Before → after in `dist/middleware/auth.js`:
+
+```js
+const errors_1 = require("@/lib/errors");   // Node cannot resolve this
+const errors_1 = require("../lib/errors");  // after tsc-alias
+```
+
+**Why `tsc-alias` over the alternatives:**
+
+| Option | Trade-off |
+|---|---|
+| `tsc-alias` (chosen) | Build-time only. Zero runtime cost, zero production dependency. |
+| Ship `tsconfig-paths` and `node -r tsconfig-paths/register` | Adds a runtime dependency and a startup hook that must resolve every import through a patched loader. Slower, and one more thing to misconfigure. |
+| Rewrite all 260 imports to relative paths | No tooling, but loses the alias ergonomics and is a 260-file diff. |
+
+Verified: `grep -r 'require("@/' dist | wc -l` → **0**.
+
+---
+
+### 17.4 Bug 3 — The health endpoint returned 500
+
+**Symptom**: `GET /health` → `500 ENOENT: no such file or directory, open '.../BS/package.json'`.
+Three tests failed on it.
+
+**Cause**: the service read the app version off disk:
+
+```ts
+resolve(__dirname, "../../../../package.json")
+```
+
+Count the hops from `backend/src/modules/health/`: `modules` → `src` → `backend` →
+**`BS/`**. That is one level too high; there is no `package.json` at the repo root.
+`readFileSync` threw, and the error handler turned it into a 500.
+
+**Two independent fixes, and both matter:**
+
+1. **Correct the depth** to `../../../package.json`. Because Bug 1's `rootDir` fix
+   made `dist/` mirror `src/`, this one path is now correct in *both* dev
+   (`src/modules/health/`) and production (`dist/modules/health/`). Before the
+   `rootDir` fix, the two contexts had different depths — the same string could not
+   have been right in both.
+
+2. **Wrap it in `try/catch`** with a fallback version. This is the important one:
+
+   > A health endpoint must never return non-2xx for a reason unrelated to health.
+
+   Docker's `HEALTHCHECK` and Render both read any non-2xx as *"this container is
+   dead."* Here, a missing version string — completely cosmetic — was enough to make
+   the orchestrator declare the service dead. And because `docker-compose.yml` has
+   `nginx` wait on `backend: condition: service_healthy`, **nginx would never have
+   started at all.** One `readFileSync` took down the entire stack.
+
+---
+
+### 17.5 Bugs 4–5 — Configuration drift (the same mistake in four places)
+
+`backend/src/config/env.ts` validates every environment variable with Zod at boot.
+It is the **contract**. Four files had drifted from it:
+
+| File | Declared | Schema actually reads | Effect |
+|---|---|---|---|
+| `.env.example` | `JWT_ACCESS_TTL_MINUTES`, `BCRYPT_ROUNDS`, `EMAIL_*` | `ACCESS_TOKEN_EXPIRES_IN`, … | Documented variables the app ignores |
+| `backend-ci.yml` | same wrong names | — | CI silently ran on defaults |
+| `docker-compose.yml` | `JWT_ACCESS_EXPIRES_IN`, `RATE_LIMIT_LOGIN_MAX` | — | Container silently ran on defaults |
+| all three | `DIRECT_URL` | *nothing* | Dead config (see 17.7) |
+
+**Why this is worse than a crash**: Zod's `z.object()` ignores unknown keys. Setting
+`JWT_ACCESS_TTL_MINUTES=60` doesn't error — it does *nothing*, and the app quietly
+uses the 15m default. You would only discover it by wondering why your token expiry
+setting has no effect. **A config error that fails loudly is a good day; one that
+fails silently costs hours.**
+
+**Fix**: rewrote all three files against the schema, and added a header to
+`.env.example` naming `src/config/env.ts` as the single source of truth. Sync is
+now checkable in one line:
+
+```bash
+comm -3 <(grep -oE "^  [A-Z_]+:" backend/src/config/env.ts | tr -d ' :' | sort -u) <(grep -oE "^[A-Z_]+=" backend/.env.example | tr -d '=' | sort -u)
+```
+
+---
+
+### 17.6 Bug 6 — The rate-limit change that broke a test
+
+`authStrictLimiter.max` had been edited from `10` to `20`, while the comment beside
+it still read *"very low ceiling … brute-force shield"* and the integration test
+still asserted a 429 within 15 login attempts. Code, comment, and test disagreed.
+
+That edit is a normal thing to do — you hit the limiter while clicking through the
+login form and you raise it. The problem is that a temporary local convenience was
+made by editing a **production security value**.
+
+**Fix**: restored `max: 10` and built a proper escape hatch in `config/env.ts`:
+
+```ts
+disabled:
+  raw.data.NODE_ENV === "development" && raw.data.DISABLE_RATE_LIMIT === "true",
+```
+
+wired into all four limiters via express-rate-limit's `skip` option. It is
+**double-guarded**: the flag alone is not enough, `NODE_ENV` must also be
+`development`. A stray `DISABLE_RATE_LIMIT=true` in a deployed environment cannot
+remove the brute-force shield.
+
+It is also deliberately inert under `NODE_ENV=test`, because the suite already
+controls limiter behaviour through the `express-rate-limit` mock in
+`src/tests/setup.ts`. Two mechanisms fighting over the same switch is how flaky
+tests are born.
+
+> **Pattern**: when you need to weaken a security control for local convenience,
+> add an explicitly environment-guarded flag. Never edit the production constant.
+
+---
+
+### 17.7 Bugs 7–9 — Docker: found only by running the container
+
+These are the three the audit could not have found any other way. The image
+**built** fine every time. It just could not **run**.
+
+#### Bug 7 — `prisma.config.ts` was never copied into the image
+
+```
+Error: The datasource.url property is required in your Prisma config file
+       when using prisma migrate deploy.
+```
+
+The container crash-looped, restarting forever.
+
+**Prisma 7 changed where the database URL lives.** In Prisma 6 and earlier:
+
+```prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")   // used to live here
+}
+```
+
+In Prisma 7 that `url` field is not allowed in the schema. It moved to
+`prisma.config.ts` at the project root:
+
+```ts
+export default defineConfig({
+  schema: "./prisma/schema.prisma",
+  datasource: { url: env("DATABASE_URL") },
+});
+```
+
+The Dockerfile copied `prisma/` — the folder — but `prisma.config.ts` sits *beside*
+it, not inside it. So the CLI found the schema and no datasource.
+
+**Fix**: `COPY --chown=nodeuser:nodegrp prisma.config.ts ./` in the production stage.
+
+#### Bug 8 — the Prisma CLI wasn't in the production image
+
+The startup command is:
+
+```dockerfile
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+```
+
+but the production stage installs with `npm ci --omit=dev`, and `prisma` (the CLI,
+distinct from `@prisma/client`) was a **devDependency**. So `npx` fell back to
+*downloading the CLI from the internet on every container start*. Slow, and it fails
+outright in an offline or network-restricted environment.
+
+**The distinction to remember:**
+
+| Package | Role | Where it belongs |
+|---|---|---|
+| `@prisma/client` | The query API your code calls at runtime | `dependencies` |
+| `prisma` | The CLI (`migrate`, `generate`, `studio`) | `devDependencies` — **unless the container runs migrations at startup**, as here |
+
+**Fix**: moved `prisma` into `dependencies`.
+
+#### Bug 9 — but do *not* copy `prisma.config.ts` into the builder stage
+
+Adding that `COPY` to the builder broke the build instead:
+
+```
+Failed to load config file "/app" — PrismaConfigEnvError:
+Cannot resolve environment variable: DATABASE_URL.
+```
+
+`prisma.config.ts` calls `env("DATABASE_URL")`, which throws when the variable is
+absent — and it is absent during `docker build`, **as it should be**.
+
+> **Never bake a database URL into an image layer.** Image layers are cached,
+> shared, and pushed to registries. Build-time is for code; run-time is for
+> configuration. The same image must be able to run against dev, staging, and prod
+> with nothing but different env vars.
+
+`prisma generate` only needs `prisma/schema.prisma`, which it finds by convention.
+The config file belongs solely in the production stage, where `DATABASE_URL` is
+supplied at run time.
+
+**Fix**: builder copies `prisma/` and `src/` only, with a comment explaining why —
+so the next person doesn't "helpfully" add it back.
+
+#### Also fixed: the host port collision
+
+`docker-compose.yml` published `"5432:5432"`. This machine already runs a local
+PostgreSQL 18 on 5432, and **two processes cannot bind the same host port** —
+`docker compose up` fails with *"port is already allocated."*
+
+**Fix**: `"${POSTGRES_PORT:-5433}:5432"`.
+
+Understanding the `HOST:CONTAINER` mapping is the key Docker networking idea here:
+
+- The **left** number is on your Windows machine. It must be free.
+- The **right** number is inside the container. It is namespaced — every container
+  gets its own network stack, so a hundred containers can each use 5432 internally
+  with no conflict.
+- Containers on the same Docker network talk to each other by **service name and
+  container port**, ignoring the published mapping entirely. That is why the backend
+  connects to `postgres:5432` (not `localhost:5433`) even though the host reaches
+  the same database at `localhost:5433`.
+
+```
+  Windows host                    bs-network (docker bridge)
+  ------------                    -------------------------
+  psql -h localhost -p 5433 ---> [ bs-postgres :5432 ]
+                                        ^
+                                        | postgres:5432
+                                  [ bs-backend :4000 ]
+                                        ^
+  curl localhost/health -------> [ bs-nginx :80 ]
+```
+
+---
+
+### 17.8 Two reliability fixes (not bugs, but they hide bugs)
+
+**Flaky frontend test.** `GlobalTable` timed out at the 5s default during a full
+run, yet passed in 760ms when run alone. Nothing was wrong with it: jsdom plus
+Testing Library role queries are slow on a cold worker, and several suites booting
+in parallel pushed the first test past the deadline. Raised `testTimeout` to 20s in
+`frontend/vitest.config.ts`.
+
+> A test that fails only under parallel load teaches you to ignore red builds. That
+> habit is far more expensive than the test. Fix it or delete it — never tolerate it.
+
+**CI could not fail on a broken build.** `frontend-ci.yml` had:
+
+```yaml
+- name: Production build
+  run: npx --no-install next build
+  continue-on-error: true      # removed
+```
+
+`continue-on-error: true` means the step reports failure and the job passes anyway.
+The build step was decorative. Removed, so a broken build now blocks the pipeline.
+
+---
+
+### 17.9 Verification — after the fixes
+
+Everything below was executed, not assumed:
+
+```
+backend  tsc --noEmit ................ clean
+frontend tsc --noEmit ................ clean
+backend  vitest run .................. 48 passed, 0 failed (was 42/6)
+frontend vitest run .................. 44 passed, 0 failed (was 43/1)
+frontend next build .................. 44 routes
+node dist/server.js .................. boots
+GET /health .......................... 200 {"status":"ok","db":"connected","version":"1.0.0"}
+docker compose up -d --build ......... postgres healthy -> backend healthy -> nginx up
+GET localhost:4000/health ............ 200 (direct to container)
+GET localhost/health ................. 200 (through nginx reverse proxy)
+_prisma_migrations in container DB ... 7 rows, 31 tables
+dist/tests inside image .............. absent
+require("@/") inside dist ............ 0 occurrences
+```
+
+---
+
+### 17.10 The transferable lessons
+
+1. **Type checking is not a build, and a build is not a boot.** `tsc --noEmit`,
+   `npm test`, and `docker build` all passed while the application was incapable of
+   starting. Add one command to your definition of done: *run the artifact you ship.*
+2. **`paths` aliases are a type-checker fiction.** Something must rewrite them —
+   `tsc-alias` at build time, or a loader hook at runtime. Choose deliberately.
+3. **Health endpoints are load-bearing infrastructure**, not a debug route. Anything
+   that can throw inside one can take down the orchestrator's view of your service.
+4. **A validated env schema is a contract.** Every file that sets env vars —
+   `.env.example`, CI, compose, the deploy dashboard — is a copy of that contract and
+   drifts silently, because unknown keys are ignored rather than rejected.
+5. **Build-time and run-time are different worlds.** Secrets and connection strings
+   belong to run-time. If `docker build` needs your database, the design is wrong.
+6. **`HOST:CONTAINER` port mappings are not symmetric.** Containers reach each other
+   by service name on the container port; the host mapping is only for you.
+7. **Never edit a production security constant for local convenience.** Add an
+   environment-guarded flag instead.
+
+---
+
+## 18. FULL TECHNOLOGY STACK REFERENCE
 
 ### FRONTEND
 | Technology | Version (approx) | Purpose |
@@ -2375,7 +2783,7 @@ git rev-parse --short HEAD; git rev-parse HEAD
 
 ---
 
-## 18. COMPLETE FOLDER STRUCTURE TREE
+## 19. COMPLETE FOLDER STRUCTURE TREE
 
 ```
 business-suite/
@@ -2766,7 +3174,7 @@ business-suite/
 
 ---
 
-## 19. ENVIRONMENT VARIABLE REFERENCE
+## 20. ENVIRONMENT VARIABLE REFERENCE
 
 ### `backend/.env` (never commit this)
 ```
@@ -2811,8 +3219,17 @@ COOKIE_DOMAIN=localhost
 # 15 minute window, 100 requests per IP for standard endpoints (auth endpoints are stricter internally)
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX=100
+# Added in Phase 14. Bypasses ALL limiters, but ONLY when NODE_ENV=development.
+# Use this while clicking through the login form by hand, instead of editing the
+# max: 10 constant in src/middleware/rateLimiter.ts — that constant is a
+# production security value and the integration test asserts against it.
+DISABLE_RATE_LIMIT=false
 
 # ── Optional: SMTP for forgot-password emails ─────────────
+# NOTE (Phase 14): these SMTP_* names are NOT in the Zod schema in
+# src/config/env.ts, so the app does not read them today. They are left here
+# as a placeholder for when mail sending is actually implemented. Add them to
+# the schema first — an env var absent from the schema is silently ignored.
 # Skip these entirely if you don't want password reset emails (the API endpoints
 # will still exist, they'll just return success without actually sending mail).
 # SMTP_HOST=smtp.gmail.com
@@ -2847,7 +3264,7 @@ NEXT_PUBLIC_APP_NAME=Business Suite
 
 ---
 
-## 20. DATABASE ENTITY RELATIONSHIP DIAGRAM (TEXT)
+## 21. DATABASE ENTITY RELATIONSHIP DIAGRAM (TEXT)
 
 ```
                     ┌──────────────┐
@@ -2955,7 +3372,7 @@ NEXT_PUBLIC_APP_NAME=Business Suite
 
 ---
 
-## 21. API ENDPOINT CHEAT SHEET
+## 22. API ENDPOINT CHEAT SHEET
 
 All endpoints prefixed with: **`/api/v1`**
 
@@ -3047,7 +3464,7 @@ All endpoints prefixed with: **`/api/v1`**
 
 ---
 
-## 22. LEARNING NOTES & KEY DECISIONS
+## 23. LEARNING NOTES & KEY DECISIONS
 
 > Updated after every phase. Think of this as your "engineering journal".
 
@@ -3073,7 +3490,7 @@ _(will be filled in)_
 
 ---
 
-## 23. INTERVIEW PREP — ANSWERS TO LIKELY QUESTIONS
+## 24. INTERVIEW PREP — ANSWERS TO LIKELY QUESTIONS
 
 > **Rule**: These are talking points. Memorize the CONCEPTS, not the words. Your interviewer will know if you're reciting a script.
 
