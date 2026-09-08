@@ -34,6 +34,8 @@ const envSchema = z.object({
     .refine((v) => !Number.isNaN(parseInt(v, 10))),
   // Local-development escape hatch (see CONFIG.rateLimit.disabled below).
   DISABLE_RATE_LIMIT: z.string().default("false"),
+  // Number of reverse proxies in front of the app (see CONFIG.trustProxy).
+  TRUST_PROXY: z.string().optional(),
 });
 
 const raw = envSchema.safeParse(process.env);
@@ -52,6 +54,22 @@ if (!raw.success) {
 
 export const CONFIG = {
   nodeEnv: raw.data.NODE_ENV,
+  /**
+   * How many reverse proxies sit in front of this app.
+   *
+   * Express only reads the client IP out of X-Forwarded-For when this is set.
+   * Left unset behind a load balancer (Render, Fly, a Docker nginx), req.ip is
+   * the PROXY address for every request - so express-rate-limit puts the whole
+   * internet in one bucket and ten login attempts globally lock everybody out.
+   *
+   * Defaults to 1 in production (Render and our nginx each add exactly one hop)
+   * and 0 in development, where there is no proxy. Raise it only to match real
+   * hops: trusting more proxies than exist lets a client forge X-Forwarded-For
+   * and bypass rate limiting entirely.
+   */
+  trustProxy: raw.data.TRUST_PROXY !== undefined
+    ? parseInt(raw.data.TRUST_PROXY, 10)
+    : raw.data.NODE_ENV === "production" ? 1 : 0,
   port: parseInt(raw.data.PORT, 10),
   databaseUrl: raw.data.DATABASE_URL,
   jwt: {

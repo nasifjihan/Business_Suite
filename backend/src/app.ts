@@ -39,6 +39,12 @@ export function createApp() {
 
   // 1. Security headers first (CSP tweaked for local Next.js inline styles from Tailwind)
   const isProd = process.env.NODE_ENV === 'production';
+  // MUST come before the rate limiters. Tells Express how many proxy hops to
+  // trust when reading the client IP from X-Forwarded-For. Without it, every
+  // request behind Render or our nginx appears to come from the proxy, so all
+  // users share one rate-limit bucket. See CONFIG.trustProxy.
+  app.set("trust proxy", CONFIG.trustProxy);
+
   app.use(
     helmet({
       contentSecurityPolicy: {
