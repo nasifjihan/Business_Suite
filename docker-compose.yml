@@ -41,7 +41,14 @@ services:
       NODE_ENV: production
       PORT: 4000
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bs_db}?schema=public&pgbouncer=false
+      # Defaults to the postgres container on bsnet. Override by putting
+      # DATABASE_URL in a .env file next to this compose file (gitignored) to
+      # point the container at a managed database such as Neon instead - no
+      # edit to this file, no rebuild, just `docker compose up -d`.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bs_db}?schema=public&pgbouncer=false}
+      # Direct (non-pooled) endpoint, used ONLY by `prisma migrate deploy` in
+      # the startup CMD. Empty on a local/container database, which has no pooler.
+      DIRECT_URL: ${DIRECT_URL:-}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-insecure-access-secret-change-me-phase-13-local-only-aaaaaaaaaaaaaaaa}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-insecure-refresh-secret-change-me-phase-13-local-only-bbbbbbbbbbbbbbbb}
       # Names below must match the Zod schema in backend/src/config/env.ts.
