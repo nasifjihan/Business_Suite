@@ -1,0 +1,26 @@
+# Docker reads this from the build context root (./frontend).
+
+# Never copy the host's node_modules: it is huge, and native binaries built on
+# Windows are not valid inside a Linux container. The Dockerfile runs npm ci.
+node_modules
+
+# Host build output. The image builds its own; copying a stale .next in is how
+# you ship yesterday's bundle.
+.next
+
+# Secrets must never enter an image layer.
+.env
+.env.local
+.env.*.local
+
+# Not needed to build the app
+src/tests
+coverage
+vitest.config.ts
+.git
+.gitignore
+*.log
+npm-debug.log*
+.vscode
+.idea
+README.md

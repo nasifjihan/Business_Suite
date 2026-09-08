@@ -29,10 +29,20 @@ export function buildRefreshCookieOptions(maxAgeSec?: number): CookieOptions {
   return {
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? "strict" : "lax",
+    // "none" in production because the frontend (Vercel) and the API (Render)
+    // are different sites. Browsers do not send a Strict/Lax cookie on a
+    // cross-site request, so the refresh cookie would never reach the API and
+    // every session would die at the first token refresh.
+    // SameSite=None is only honoured together with Secure, which is set above
+    // for production. Cross-site reads stay blocked by the CORS allow-list.
+    sameSite: isProd ? "none" : "lax",
     path: "/",
     domain: CONFIG.cors.cookieDomain === "localhost" ? undefined : CONFIG.cors.cookieDomain,
-    maxAge: seconds,
+    // Express res.cookie() takes maxAge in MILLISECONDS and divides by 1000 to
+    // write the header. Passing seconds here produced "Max-Age=604" (~10 min)
+    // for a 7-day token: the JWT stayed valid but the browser discarded the
+    // cookie, so refresh failed and the user was silently logged out.
+    maxAge: seconds * 1000,
   };
 }
 

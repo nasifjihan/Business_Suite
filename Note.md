@@ -31,3 +31,5 @@ docker build -t bs-backend:v1 ./backend
 docker compose up -d --build
 
 docker compose down
+docker compose stop
+
