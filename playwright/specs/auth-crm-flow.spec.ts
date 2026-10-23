@@ -36,7 +36,9 @@ test.describe("Auth + CRM flow", () => {
     api = await apiFor(await readAccessToken(page));
 
     await page.goto("/crm/customers");
-    await expect(page.getByRole("heading", { name: "Customers" })).toBeVisible();
+    // `name` is a case-insensitive SUBSTRING match, so the empty state's
+    // "No customers found" also matches — anchor with `exact`.
+    await expect(page.getByRole("heading", { name: "Customers", exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "New customer" }).first().click();
     const dialog = page.getByRole("dialog");

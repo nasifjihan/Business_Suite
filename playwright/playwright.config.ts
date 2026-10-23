@@ -15,11 +15,19 @@ import { defineConfig, devices } from "@playwright/test";
  * origin, so cookies set by the API are visible to the UI without any CORS or
  * SameSite workarounds.
  *
- * `127.0.0.1` is used instead of `localhost` on purpose: on Windows,
- * `localhost` can resolve to `::1` first, and the Docker port publish binds
- * IPv4 only.
+ * The hostname matters and must be `localhost`, not `127.0.0.1`. The frontend
+ * image bakes `NEXT_PUBLIC_API_URL=http://localhost/api/v1` into the browser
+ * bundle at build time, so the page has to be served from the same hostname for
+ * its API calls to stay same-origin. Loading the UI from `127.0.0.1` instead
+ * makes every request cross-origin, and the backend's CORS allowlist
+ * (`FRONTEND_URL`) rejects it — the login form then just sits there with a
+ * generic error banner and no visible cause.
+ *
+ * (The `127.0.0.1`-not-`localhost` rule seen elsewhere in this repo is for
+ * probes run INSIDE the nginx container, where /etc/hosts maps localhost to ::1.
+ * From the host, nginx publishes port 80 on both stacks.)
  */
-export const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1";
+export const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost";
 
 export default defineConfig({
   testDir: "./specs",

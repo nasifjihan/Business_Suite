@@ -1,0 +1,122 @@
+name: E2E CI
+on: [push, pull_request]
+
+# Runs the Playwright suite against the REAL stack — the same four containers
+# `docker compose up -d --build` starts locally (postgres, backend, frontend,
+# nginx). Nothing is stubbed and nothing runs on the host except the browser.
+#
+# Deliberately not folded into backend-ci.yml / frontend-ci.yml: those run
+# against a bare Postgres service and the source tree, take a couple of minutes
+# and never build an image. This one has to build two production images first.
+# Keeping them apart means a red unit test does not hide behind a ten-minute
+# docker build, and a slow E2E run does not make the fast suites look hung.
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      # ── Host-side env (docker compose interpolation + the seed scripts) ──
+      # Compose evaluates ${VAR:-default} on the HOST at `up` time, so these
+      # reach the containers without editing docker-compose.yml.
+      #
+      # RATE_LIMIT_MAX must be raised here. standardLimiter is mounted app-wide
+      # at 100 requests / 15 min / IP and counts *every* /api/v1 call, tokens
+      # included; three specs driving the real UI blow straight past it and once
+      # it trips every request 429s, so the UI's refresh interceptor bounces to
+      # /login?expired=1 and the whole suite fails for the wrong reason.
+      RATE_LIMIT_MAX: "20000"
+      # Left at false on purpose. Raising the ceiling is the honest fix; turning
+      # the limiter off would stop CI from ever exercising it.
+      DISABLE_RATE_LIMIT: "false"
+      # Port 5433 is what the compose file publishes on the host (5432 is taken
+      # by a local PostgreSQL on the dev machines). The seed scripts run from
+      # the host against the postgres container over that port; the backend
+      # container reaches the same database as postgres:5432 over bsnet.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5433/bs_db?schema=public
+      E2E_BASE_URL: http://localhost
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: |
+            backend/package-lock.json
+            playwright/package-lock.json
+
+      # ── 1. Database ────────────────────────────────────────────────────
+      - name: Start PostgreSQL
+        run: docker compose up -d --wait postgres
+
+      # ── 2. Schema + data ───────────────────────────────────────────────
+      # The backend image runs `prisma migrate deploy` in its CMD, but that
+      # happens after the containers boot — and the seed scripts need the tables
+      # to already exist. Migrating from the host here makes seeding possible
+      # and costs one cached `npm ci`.
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Apply migrations
+        working-directory: backend
+        run: npx prisma migrate deploy
+
+      # Demo fixtures included: `seed_demo_phase7_pos.ts` is what creates the
+      # "Main Warehouse", and the POS spec sells stock out of the warehouse the
+      # UI auto-selects. Running with --no-demo leaves the list empty, so the
+      # checkout posts no warehouseId and the stock decrement is skipped.
+      #
+      # NODE_ENV is left unset on purpose: seed.ts skips the demo fixtures when
+      # NODE_ENV=production.
+      - name: Seed system data and demo fixtures
+        working-directory: backend
+        run: npm run seed
+
+      - name: Seed the E2E account
+        working-directory: backend
+        run: npm run seed:e2e
+
+      # ── 3. The stack ───────────────────────────────────────────────────
+      # --wait blocks until all four healthchecks pass, which is stronger than
+      # polling /health by hand: it also proves the frontend and nginx containers
+      # came up, not just the backend.
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait --wait-timeout 900
+
+      - name: Verify the proxy is serving
+        run: |
+          curl -fsS http://localhost/health
+          curl -fsS -o /dev/null -w 'frontend: HTTP %{http_code}\n' http://localhost/login
+
+      # ── 4. Browsers and the suite ──────────────────────────────────────
+      - name: Install Playwright dependencies
+        working-directory: playwright
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: playwright
+        run: npx playwright install --with-deps chromium
+
+      # Retries come from playwright.config.ts (1 when CI is set, 0 otherwise).
+      # Each spec logs in exactly once — POST /auth/login sits behind
+      # authStrictLimiter at 10 requests / 15 min / IP — so a blanket --retries
+      # here would burn that budget and cascade into 429s.
+      - name: Run Playwright
+        working-directory: playwright
+        run: npx playwright test
+
+      # ── 5. Diagnostics ─────────────────────────────────────────────────
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --tail=300
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright/playwright-report/
+            playwright/test-results/
+          retention-days: 7

@@ -97,7 +97,11 @@ test.describe("POS + inventory flow", () => {
     await payDialog.getByPlaceholder("0.00").fill("100");
     await payDialog.getByRole("button", { name: "Complete sale" }).click();
 
-    await expect(page.getByText("Order completed successfully")).toBeVisible();
+    // The toast also renders an aria-live mirror and a longer description, so
+    // the substring match is ambiguous — anchor it.
+    await expect(
+      page.getByText("Order completed successfully", { exact: true })
+    ).toBeVisible();
     await page.waitForURL(/\/sales\/orders\//);
     orderId = page.url().split("/sales/orders/")[1]?.split(/[?#]/)[0];
 
