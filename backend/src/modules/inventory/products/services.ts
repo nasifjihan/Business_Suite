@@ -45,7 +45,13 @@ export const ProductService = {
           sku: true,
           name: true,
           barcode: true,
+          description: true,
+          // `costPrice` / `unitOfMeasure` / `weightKg` are read back by the edit
+          // modal's prefill; without them an edit silently reset them.
+          costPrice: true,
           unitPrice: true,
+          unitOfMeasure: true,
+          weightKg: true,
           status: true,
           imageUrl: true,
           createdAt: true,

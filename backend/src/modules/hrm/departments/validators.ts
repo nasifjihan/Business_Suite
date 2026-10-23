@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/utils/pagination";
+import { booleanQuery } from "@/utils/query";
 import { UserStatus } from "@prisma/client";
 
 export const CreateDepartmentSchema = z.object({
@@ -23,6 +24,6 @@ export type UpdateDepartmentDto = z.infer<typeof UpdateDepartmentSchema>;
 export const ListDepartmentsSchema = PaginationSchema.extend({
   search: z.string().trim().max(100).optional(),
   status: z.nativeEnum(UserStatus).optional(),
-  isActive: z.coerce.boolean().optional(),
+  isActive: booleanQuery.optional(),
 });
 export type ListDepartmentsQuery = z.infer<typeof ListDepartmentsSchema>;

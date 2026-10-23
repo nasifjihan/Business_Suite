@@ -58,8 +58,14 @@ services:
       REFRESH_TOKEN_EXPIRES_IN: 7d
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
       RATE_LIMIT_WINDOW_MS: "900000"
-      RATE_LIMIT_MAX: "100"
-      DISABLE_RATE_LIMIT: "false"
+      # Overridable so the Playwright suite (and local manual testing) can raise
+      # the app-wide ceiling without weakening production: three specs drive the
+      # real UI and blow past 100 requests per 15 minutes per IP. Note the global
+      # limiter applies to *every* /api/v1 call, authenticated included, so the
+      # production default is a coarse DoS shield only — authStrictLimiter is the
+      # real brute-force shield and stays at 10/15min.
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      DISABLE_RATE_LIMIT: ${DISABLE_RATE_LIMIT:-false}
       # ── Email / SMTP ────────────────────────────────────────────────
       # Passed through from the shell / .env next to this file. MAIL_ENABLED
       # defaults to false, which keeps the container's forgot-password on the

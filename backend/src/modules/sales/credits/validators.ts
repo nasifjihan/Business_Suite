@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/utils/pagination";
+import { booleanQuery } from "@/utils/query";
 import { CustomerStatus } from "@prisma/client";
 
 export const AdjustCreditSchema = z.object({
@@ -10,7 +11,7 @@ export const AdjustCreditSchema = z.object({
 export type AdjustCreditDto = z.infer<typeof AdjustCreditSchema>;
 
 export const ListCreditsSchema = PaginationSchema.extend({
-  withPositiveBalance: z.coerce.boolean().optional(),
+  withPositiveBalance: booleanQuery.optional(),
   status: z.nativeEnum(CustomerStatus).optional(),
   minBalance: z.coerce.number().optional(),
 });

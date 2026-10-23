@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/utils/pagination";
+import { booleanQuery } from "@/utils/query";
 
 export const CreateWarehouseSchema = z.object({
   name: z.string().trim().min(1),
@@ -19,6 +20,6 @@ export type UpdateWarehouseDto = z.infer<typeof UpdateWarehouseSchema>;
 
 export const ListWarehousesSchema = PaginationSchema.extend({
   search: z.string().optional(),
-  isActive: z.boolean().optional(),
+  isActive: booleanQuery.optional(),
 });
 export type ListWarehousesQuery = z.infer<typeof ListWarehousesSchema>;

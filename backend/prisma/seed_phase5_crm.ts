@@ -18,13 +18,35 @@ type PermissionSeed = {
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
-// 12 new granular CRM codes (sub-modules) — Phase 3 already inserted:
-// customers.read/create/update/delete, crm.export,
-// leads.read/create/update/delete/assign/activity  (10 existing total)
-// Adding: contacts R/C/U/D (4), opportunities R/C/U/D/stage (5), activities R/C (2), contracts R/C/U/D (4) = 15.
-// Header says 12 — take union across existing, upsert 15 new codes total for phase 5.
+// 24 granular CRM codes.
+//
+// Phase 3 inserted the legacy un-namespaced aliases (customers.read/…,
+// leads.read/…, crm.export) — 10 codes. Phase 5 adds the namespaced codes the
+// routes and the admin UI actually use: customers R/C/U/D (4), leads R/C/U/D (4),
+// contacts R/C/U/D (4), opportunities R/C/U/D/stage (5), leads.convert (1),
+// activities R/C (2), contracts R/C/U/D (4) = 24.
 // ──────────────────────────────────────────────────────────────────────────────
 const CRM_PERMISSIONS: PermissionSeed[] = [
+  // CRM / Customers (4) and CRM / Leads (4)
+  //
+  // These are the codes the API routes actually authorize on (see
+  // src/modules/crm/{customers,leads}/routes.ts) and the ones the admin UI gates
+  // on. Phase 3 only created the legacy un-namespaced aliases
+  // (customers.read/create/update/delete, leads.read/create/update/delete), so
+  // without these entries every CRM customer and lead endpoint answered 403 for
+  // every role, including SUPER_ADMIN — no role can be granted a code that does
+  // not exist. The legacy aliases are kept and still granted so existing gates
+  // that fall back to them keep working.
+  { code: "crm.customers.read",   module: "crm", action: "read",   description: "View customers list & detail" },
+  { code: "crm.customers.create", module: "crm", action: "create", description: "Create customers" },
+  { code: "crm.customers.update", module: "crm", action: "update", description: "Edit customer data" },
+  { code: "crm.customers.delete", module: "crm", action: "delete", description: "Delete customers" },
+
+  { code: "crm.leads.read",   module: "crm", action: "read",   description: "View leads & pipeline" },
+  { code: "crm.leads.create", module: "crm", action: "create", description: "Create new leads" },
+  { code: "crm.leads.update", module: "crm", action: "update", description: "Edit lead data, status changes" },
+  { code: "crm.leads.delete", module: "crm", action: "delete", description: "Delete leads" },
+
   // CRM / Contacts (4)
   { code: "crm.contacts.read",      module: "crm", action: "read",     description: "View customer contacts (sub-list)" },
   { code: "crm.contacts.create",    module: "crm", action: "create",   description: "Add new customer contacts" },
@@ -67,6 +89,8 @@ const ADDITIONAL_ROLE_GRANTS: Record<RoleType, string[]> = {
 
   [RoleType.MANAGER]: [
     ...getCodesByPrefix([
+      "crm.customers.",
+      "crm.leads.",
       "crm.contacts.",
       "crm.opportunities.",
       "crm.leads.convert",
@@ -76,7 +100,7 @@ const ADDITIONAL_ROLE_GRANTS: Record<RoleType, string[]> = {
   ],
 
   [RoleType.SALES]: [
-    ...getCodesByPrefix(["crm.contacts."]),
+    ...getCodesByPrefix(["crm.customers.", "crm.leads.", "crm.contacts."]),
     ...getCodesByPrefix(["crm.opportunities."]).filter((c) => c !== "crm.opportunities.delete"),
     "crm.leads.convert",
     ...getCodesByPrefix(["crm.activities."]),
@@ -85,6 +109,9 @@ const ADDITIONAL_ROLE_GRANTS: Record<RoleType, string[]> = {
   ],
 
   [RoleType.CASHIER]: [
+    // Mirrors the legacy `customers.read` / `customers.create` the tier already had.
+    "crm.customers.read",
+    "crm.customers.create",
     "crm.contacts.read",
     "crm.activities.read",
     "crm.contracts.read",

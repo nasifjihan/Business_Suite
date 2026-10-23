@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/utils/pagination";
+import { booleanQuery } from "@/utils/query";
 import { RefundReason } from "@prisma/client";
 
 export const RefundItemSchema = z.object({
@@ -23,7 +24,7 @@ export const ListRefundsSchema = PaginationSchema.extend({
   orderId: z.string().uuid().optional(),
   productId: z.string().uuid().optional(),
   reason: z.nativeEnum(RefundReason).optional(),
-  restock: z.coerce.boolean().optional(),
+  restock: booleanQuery.optional(),
   dateFrom: z.coerce.date().optional(),
   dateTo: z.coerce.date().optional(),
 });

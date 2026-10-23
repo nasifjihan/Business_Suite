@@ -24,7 +24,10 @@ creditsRouter
   .route("/adjust")
   .post(
     validate({ body: AdjustCreditSchema }),
-    authorize("sales.credits.adjust"),
+    // The permission catalog defines sales.credits.update ("Decrease / adjust
+    // customer credit balance") — there is no sales.credits.adjust code, and the
+    // admin UI gates the Adjust Credit modal on sales.credits.update.
+    authorize("sales.credits.update"),
     CreditsController.adjust,
   );
 

@@ -48,6 +48,10 @@ export const CustomerService = {
           email: true,
           phone: true,
           status: true,
+          // The customers table renders both of these columns; without them the
+          // row renderer reads `undefined` and the CRM error boundary traps.
+          source: true,
+          totalSpent: true,
           createdAt: true,
           creator: { select: { id: true, firstName: true, lastName: true } },
         },

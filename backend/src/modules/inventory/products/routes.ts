@@ -55,7 +55,7 @@ productsRouter
 
 // Reuses inventory.products.update rather than introducing a new permission
 // code: replacing a product's image IS a product update. Avoids touching the
-// 143-code RBAC matrix and the role grants that go with it.
+// RBAC permission matrix and the role grants that go with it.
 //
 // authorize() runs BEFORE multer on purpose — an unauthenticated or
 // unauthorised caller should be rejected before we buffer their bytes.

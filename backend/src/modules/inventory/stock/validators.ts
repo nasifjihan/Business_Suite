@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/utils/pagination";
+import { booleanQuery } from "@/utils/query";
 
 const UUID = z.string().uuid();
 
 export const ListStockSchema = PaginationSchema.extend({
   productId: UUID.optional(),
   warehouseId: UUID.optional(),
-  lowOnly: z.coerce.boolean().optional(),
+  lowOnly: booleanQuery.optional(),
 });
 export type ListStockQuery = z.infer<typeof ListStockSchema>;
 

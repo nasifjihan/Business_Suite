@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/utils/pagination";
+import { booleanQuery } from "@/utils/query";
 import { EmploymentType, EmployeeStatus } from "@prisma/client";
 
 export const CreateEmployeeSchema = z.object({
@@ -59,7 +60,7 @@ export const ListEmployeesSchema = PaginationSchema.extend({
   departmentId: z.string().uuid().optional(),
   designationId: z.string().uuid().optional(),
   status: z.nativeEnum(EmployeeStatus).optional(),
-  isActive: z.coerce.boolean().optional(),
+  isActive: booleanQuery.optional(),
   employmentType: z.nativeEnum(EmploymentType).optional(),
   sortBy: z.enum(["employeeCode", "firstName", "lastName", "joiningDate", "status", "createdAt"]).optional(),
 }).strip();

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/utils/pagination";
+import { booleanQuery } from "@/utils/query";
 
 export const CreateDesignationSchema = z.object({
   name: z.string().trim().min(1),
@@ -20,6 +21,6 @@ export type UpdateDesignationDto = z.infer<typeof UpdateDesignationSchema>;
 export const ListDesignationsSchema = PaginationSchema.extend({
   search: z.string().trim().max(100).optional(),
   departmentId: z.string().uuid().optional(),
-  isActive: z.coerce.boolean().optional(),
+  isActive: booleanQuery.optional(),
 });
 export type ListDesignationsQuery = z.infer<typeof ListDesignationsSchema>;
