@@ -71,7 +71,7 @@ export default function CreditsPage() {
   const { data: creditsRes, isFetching, refetch } = useListCreditsQuery(filters, {
     refetchOnMountOrArgChange: true,
   });
-  const { data: customersRes } = useListCustomersQuery({ pageSize: 200 });
+  const { data: customersRes } = useListCustomersQuery({ pageSize: 100 });
 
   const credits = extract(creditsRes as any).items as CreditListItem[];
   const meta = extract(creditsRes as any).meta;

@@ -97,7 +97,11 @@ type MarkAttendanceFormValues = z.infer<typeof markAttendanceSchema>;
 function AttendancePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const canMarkAttendance = useHasPermission({ one: "hrm.attendance.mark" });
+  // Two different backend gates: the self check-in/out panel calls
+  // /hrm/attendance/self/* (`hrm.attendance.self_check`), the "Mark attendance"
+  // modal calls POST /hrm/attendance (`hrm.attendance.create`).
+  const canSelfCheck = useHasPermission({ one: "hrm.attendance.self_check" });
+  const canMarkAttendance = useHasPermission({ one: "hrm.attendance.create" });
   const canReadAll = useHasPermission({ one: "hrm.attendance.read_all" });
   const authUserId = useAppSelector((s) => s.auth.user?.id);
 
@@ -426,7 +430,7 @@ function AttendancePageContent() {
         }
       />
 
-      <PermissionGate one="hrm.attendance.mark">
+      <PermissionGate one="hrm.attendance.self_check">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Button
             size="lg"
@@ -498,7 +502,7 @@ function AttendancePageContent() {
             />
           )}
         </div>
-        <PermissionGate one="hrm.attendance.mark">
+        <PermissionGate one="hrm.attendance.create">
           <Button size="sm" onClick={() => setModal({ kind: "mark" })}>
             <CalendarCheck className="w-4 h-4 mr-1" /> Mark attendance
           </Button>
@@ -538,7 +542,7 @@ function AttendancePageContent() {
             <Button
               type="submit"
               form="checkin-form"
-              disabled={selfCheckInState.isLoading || !canMarkAttendance}
+              disabled={selfCheckInState.isLoading || !canSelfCheck}
               className="bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700"
             >
               {selfCheckInState.isLoading ? "Checking in…" : "Check In"}
@@ -600,7 +604,7 @@ function AttendancePageContent() {
             <Button
               type="submit"
               form="checkout-form"
-              disabled={selfCheckOutState.isLoading || !canMarkAttendance}
+              disabled={selfCheckOutState.isLoading || !canSelfCheck}
               className="bg-sky-600 hover:bg-sky-700 dark:bg-sky-600 dark:hover:bg-sky-700"
             >
               {selfCheckOutState.isLoading ? "Checking out…" : "Check Out"}

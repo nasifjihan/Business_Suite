@@ -63,16 +63,16 @@ export type ProductItem = {
   description: string | null;
   categoryId: string | null;
   category?: CategoryItem | null;
-  unit: string;
+  unitOfMeasure: string;
   costPrice: number | string;
-  sellingPrice: number | string;
+  unitPrice: number | string;
   currency: string;
   minStockLevel: number;
   maxStockLevel: number;
   reorderPoint: number;
   status: ProductStatus;
   barcode: string | null;
-  weight: number | string | null;
+  weightKg: number | string | null;
   dimensions: string | null;
   imageUrl: string | null;
   createdById: string | null;
@@ -214,6 +214,7 @@ export type StockItem = {
   warehouseId: string;
   warehouse?: WarehouseItem | null;
   quantity: number;
+  minimumLevel: number;
   reservedQuantity: number;
   availableQuantity: number;
   unitCost: number | string;

@@ -66,7 +66,7 @@ export default function WarehousesPage() {
     refetchOnMountOrArgChange: true,
   });
 
-  const { data: stockRes } = useListStockQuery({ page: 1, pageSize: 10000 });
+  const { data: stockRes } = useListStockQuery({ page: 1, pageSize: 100 });
 
   const warehouses = extract(warehousesRes as any).items as WarehouseItem[];
   const meta = extract(warehousesRes as any).meta;

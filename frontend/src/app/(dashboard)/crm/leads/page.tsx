@@ -170,7 +170,7 @@ export default function LeadsPage() {
 
   const listArgs = useMemo(() => {
     if (viewMode === "kanban") {
-      return { ...filters, page: 1, pageSize: 500 };
+      return { ...filters, page: 1, pageSize: 100 };
     }
     return filters;
   }, [viewMode, filters]);

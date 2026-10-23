@@ -127,6 +127,19 @@ export function unwrapPaginatedEnvelope<TData extends object>(
   result: RTKQueryResultLike<TData>["data"]
 ): { items: TData[]; meta: PaginationMetaShape | undefined } {
   if (!result) return { items: [], meta: undefined };
+  // Some pages hand over the already-unwrapped `{ items, meta }` payload
+  // (e.g. `data: customersRes?.data`) instead of the full envelope
+  // `{ success, data: { items, meta } }`. Accept both shapes — otherwise those
+  // pages render their empty state even when the API returned rows.
+  if (Array.isArray(result)) {
+    return { items: result as unknown as TData[], meta: undefined };
+  }
+  if (Array.isArray((result as any).items)) {
+    return {
+      items: (result as any).items as TData[],
+      meta: (result as any).meta as PaginationMetaShape | undefined,
+    };
+  }
   if (Array.isArray((result as any).data)) {
     return { items: (result as any).data as TData[], meta: undefined };
   }

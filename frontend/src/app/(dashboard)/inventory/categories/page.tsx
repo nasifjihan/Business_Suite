@@ -67,7 +67,7 @@ export default function CategoriesPage() {
     refetchOnMountOrArgChange: true,
   });
 
-  const { data: allCategoriesRes } = useListCategoriesQuery({ page: 1, pageSize: 1000 });
+  const { data: allCategoriesRes } = useListCategoriesQuery({ page: 1, pageSize: 100 });
 
   const categories = extract(categoriesRes as any).items as CategoryItem[];
   const meta = extract(categoriesRes as any).meta;

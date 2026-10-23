@@ -153,7 +153,7 @@ export default function MovementsLedgerPage() {
   );
 
   const { data: warehousesRes } = useListWarehousesQuery({ pageSize: 100 });
-  const { data: productsRes } = useListProductsQuery({ pageSize: 200 });
+  const { data: productsRes } = useListProductsQuery({ pageSize: 100 });
 
   const movements = (extract(movementsRes as any).items ?? []) as MovementItem[];
   const meta = extract(movementsRes as any).meta;

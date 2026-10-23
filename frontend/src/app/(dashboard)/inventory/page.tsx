@@ -49,7 +49,7 @@ const PRODUCT_STATUS_TONE = {
 
 export default function InventoryOverviewPage() {
   const { data: productsRes } = useListProductsQuery({ page: 1, pageSize: 1 });
-  const { data: stockRes } = useListStockQuery({ page: 1, pageSize: 1000 });
+  const { data: stockRes } = useListStockQuery({ page: 1, pageSize: 100 });
   const { data: lowStockRes } = useListLowStockProductsQuery({ page: 1, pageSize: 1 });
   const { data: movementsMetaRes } = useListMovementsQuery({ page: 1, pageSize: 1 });
 

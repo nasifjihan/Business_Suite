@@ -227,7 +227,7 @@ export default function StockListPage() {
         header: "Minimum Level",
         cell: ({ row: { original: s } }) => (
           <span className="text-sm text-foreground tabular-nums">
-            {s.product?.minStockLevel ?? 0}
+            {s.minimumLevel ?? 0}
           </span>
         ),
       }),
@@ -235,7 +235,7 @@ export default function StockListPage() {
         id: "status",
         header: "Status",
         cell: ({ row: { original: s } }) => {
-          const min = s.product?.minStockLevel ?? 0;
+          const min = s.minimumLevel ?? 0;
           const isLow = s.quantity < min;
           return (
             <StatusBadge

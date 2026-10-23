@@ -155,7 +155,7 @@ export default function OrdersPage() {
   const { data: ordersRes, isFetching, refetch } = useListOrdersQuery(filters, {
     refetchOnMountOrArgChange: true,
   });
-  const { data: customersRes } = useListCustomersQuery({ pageSize: 200 });
+  const { data: customersRes } = useListCustomersQuery({ pageSize: 100 });
   const { data: whRes } = useListWarehousesQuery({ pageSize: 100 });
 
   const orders = extract(ordersRes as any).items as OrderSummaryItem[];

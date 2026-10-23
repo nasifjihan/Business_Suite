@@ -183,10 +183,10 @@ export default function ProductDetailPage() {
         barcode: productDetail.barcode ?? "",
         categoryId: productDetail.categoryId ?? "",
         status: productDetail.status,
-        unit: productDetail.unit ?? "EACH",
+        unit: productDetail.unitOfMeasure ?? "EACH",
         costPrice: productDetail.costPrice ?? 0,
-        sellingPrice: productDetail.sellingPrice ?? 0,
-        weight: productDetail.weight ?? "",
+        sellingPrice: productDetail.unitPrice ?? 0,
+        weight: productDetail.weightKg ?? "",
         description: productDetail.description ?? "",
       });
     }
@@ -572,12 +572,12 @@ export default function ProductDetailPage() {
                       Unit / Weight
                     </div>
                     <p className="text-sm font-medium text-foreground">
-                      {productDetail?.unit ?? "—"}
-                      {productDetail?.weight !== null &&
-                        productDetail?.weight !== undefined &&
-                        productDetail?.weight !== "" && (
+                      {productDetail?.unitOfMeasure ?? "—"}
+                      {productDetail?.weightKg !== null &&
+                        productDetail?.weightKg !== undefined &&
+                        productDetail?.weightKg !== "" && (
                           <span className="text-xs text-muted-foreground ml-2">
-                            · {Number(productDetail.weight).toLocaleString()} kg
+                            · {Number(productDetail.weightKg).toLocaleString()} kg
                           </span>
                         )}
                     </p>
@@ -608,7 +608,7 @@ export default function ProductDetailPage() {
                       Unit Price (Sell)
                     </p>
                     <MoneyDisplay
-                      value={productDetail?.sellingPrice}
+                      value={productDetail?.unitPrice}
                       currency={productDetail?.currency ?? "USD"}
                       align="left"
                       className="!w-auto !text-lg !font-semibold !text-emerald-700 dark:!text-emerald-300"

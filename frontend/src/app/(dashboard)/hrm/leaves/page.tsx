@@ -100,7 +100,6 @@ function LeavesPageContent() {
   const canApprove = useHasPermission({ one: "hrm.leave.approve" });
   const canCreate = useHasPermission({ one: "hrm.leave.create" });
   const authUserId = useAppSelector((s) => s.auth.user?.id);
-  const canCancelSelf = useHasPermission({ one: "hrm.leave.cancel_self" });
 
   const [activeTab, setActiveTab] = useState<"mine" | "all">(canReadAll ? "all" : "mine");
 
@@ -427,7 +426,9 @@ function LeavesPageContent() {
         cell: ({ row: { original: l } }) => {
           const isSelf = l.employeeId === currentUserEmployeeId;
           const canApproveThis = l.status === "PENDING" && canApprove;
-          const canCancelThis = isSelf && l.status === "PENDING" && (canCancelSelf || canCreate);
+          // PATCH /hrm/leaves/:id/cancel is gated by `hrm.leave.create` on the
+          // backend, so there is no separate "cancel self" permission to check.
+          const canCancelThis = isSelf && l.status === "PENDING" && canCreate;
           return (
             <div className="flex items-center justify-end gap-1.5">
               {canApproveThis && (
@@ -468,7 +469,7 @@ function LeavesPageContent() {
         },
       }),
     ];
-  }, [employeeById, leaveTypeById, currentUserEmployeeId, canApprove, canCancelSelf, canCreate]);
+  }, [employeeById, leaveTypeById, currentUserEmployeeId, canApprove, canCreate]);
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">

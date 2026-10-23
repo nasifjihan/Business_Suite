@@ -184,10 +184,10 @@ export default function ProductsPage() {
         barcode: modal.product.barcode ?? "",
         categoryId: modal.product.categoryId ?? "",
         status: modal.product.status,
-        unit: modal.product.unit ?? "EACH",
+        unit: modal.product.unitOfMeasure ?? "EACH",
         costPrice: modal.product.costPrice ?? 0,
-        sellingPrice: modal.product.sellingPrice ?? 0,
-        weight: modal.product.weight ?? "",
+        sellingPrice: modal.product.unitPrice ?? 0,
+        weight: modal.product.weightKg ?? "",
         description: modal.product.description ?? "",
       });
     } else if (modal.kind === "create") {
@@ -369,7 +369,7 @@ export default function ProductsPage() {
             <div className="flex items-center justify-end gap-1">
               <span className="text-[10px] text-slate-400 uppercase tracking-wide mr-1">Sell</span>
               <MoneyDisplay
-                value={p.sellingPrice}
+                value={p.unitPrice}
                 currency={p.currency ?? "USD"}
                 align="left"
                 className="!w-auto !text-xs font-semibold text-foreground"
