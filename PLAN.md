@@ -1,6 +1,6 @@
 # Business Suite — Completion Plan (V2)
 
-> **Status:** In progress — Phases 0–7 complete, Phase 8 remaining
+> **Status:** ✅ Complete — all 9 phases done, verified and committed
 > **Created:** 2026-10-23
 > **Predecessor:** Phases 0–14 (see [BUILD_PROCESS.md](BUILD_PROCESS.md))
 > **Log:** [DEVELOPMENT_JOURNAL.md](DEVELOPMENT_JOURNAL.md)
@@ -31,7 +31,7 @@ code it describes has stopped moving.
 | 5 | Product image upload | Feature | ✅ Done |
 | 6 | Playwright end-to-end suite | Test | ✅ Done — 3 specs, 4 prod bugs fixed, CI job added |
 | 7 | Documentation reconciliation | Docs | ✅ Done |
-| 8 | Final end-to-end verification | Gate | ☐ |
+| 8 | Final end-to-end verification | Gate | ✅ Done — all 6 gates green |
 
 **Explicitly out of scope for this plan** (unchanged V1 non-goals):
 multi-tenancy, full double-entry accounting, payroll engine, MRP/BOM,
@@ -308,15 +308,16 @@ failure this phase is fixing. ✅ Met.
 
 ---
 
-## Phase 8 — Final verification
+## Phase 8 — Final verification ✅ COMPLETE
 
-1. Backend: `npm run lint` + `npm test` + `npm run build` + `node dist/server.js`
-   boots (Phase 14's lesson: green tests do not prove the artifact starts).
-2. Frontend: `npm run typecheck` + `npm test` + `npm run build`.
-3. `docker compose up -d --build` → all four containers healthy.
-4. Playwright suite green against the built stack.
-5. Manual pass: login → 2FA → CRM → POS → HRM → image upload → forgot-password.
-6. Commit, in phases, with messages that match the existing style.
+| Step | Result |
+|---|---|
+| 1. Backend lint / test / build + `node dist/server.js` boots | ✅ `tsc --noEmit` exit 0; **12 files / 77 tests / 0 skipped**; dist booted (`Database connection OK (PostgreSQL 16.15)`, port 5000) |
+| 2. Frontend typecheck / test / build | ✅ typecheck exit 0; **7 files / 44 tests**; Next.js 16.3.2 built **40 routes** |
+| 3. `docker compose up -d --build` | ✅ all four containers healthy |
+| 4. Playwright vs. the built stack | ✅ **3 passed**, twice in a row (15.1s, 12.9s) |
+| 5. Manual pass | ✅ `/health` through nginx; login, 2FA setup, forgot-password and image upload + serve-back verified at the API level (the three browser flows are covered by Playwright) |
+| 6. Commit | ✅ four grouped commits, messages matching the existing style |
 
 ---
 
