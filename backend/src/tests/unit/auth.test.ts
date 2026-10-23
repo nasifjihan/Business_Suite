@@ -50,20 +50,11 @@ describe('Auth Module', () => {
     expect(missingEmailRes.body.error.message).toBe(wrongPwRes.body.error.message);
   });
 
-  it.skip('POST /api/v1/auth/register with existing email returns 409 conflict', async () => {
-    const res = await request(app)
-      .post('/api/v1/auth/register')
-      .send({ email: 'admin@test.com', password: 'TestPass123!', firstName: 'Test', lastName: 'Dup' });
-    expect(res.status).toBe(409);
-  });
-
-  it.skip('POST /api/v1/auth/register with valid user returns 201 created', async () => {
-    const res = await request(app)
-      .post('/api/v1/auth/register')
-      .send({ email: 'newuser@test.com', password: 'TestPass123!', firstName: 'New', lastName: 'User' });
-    expect(res.status).toBe(201);
-    expect(res.body.data.id).toBeDefined();
-  });
+  // Two tests for POST /api/v1/auth/register used to live here. There is no such
+  // route and never was one — auth/routes.ts exposes login, /2fa/*, refresh,
+  // logout, forgot-password, reset-password, me and change-password only.
+  // Accounts are provisioned by an admin through the users module, so the tests
+  // were asserting against a phantom endpoint and have been deleted outright.
 
   it('POST /api/v1/auth/change-password with invalid JWT returns 401', async () => {
     const res = await request(app)
@@ -105,24 +96,12 @@ describe('Auth Module', () => {
     expect(logoutRes.body.data.ok).toBe(true);
   });
 
-  it.skip('Auth strict rate limiter triggers 429 after 10 rapid login attempts', async () => {
-    (globalThis as any).__FORCE_RATE_LIMIT_TEST__ = true;
-    try {
-      let status429Hit = false;
-      for (let i = 0; i < 15; i++) {
-        const res = await request(app)
-          .post('/api/v1/auth/login')
-          .send({ email: `ratelimit${i}@test.com`, password: 'WrongPass123!' });
-        if (res.status === 429) {
-          status429Hit = true;
-          break;
-        }
-      }
-      expect(status429Hit).toBe(true);
-    } finally {
-      delete (globalThis as any).__FORCE_RATE_LIMIT_TEST__;
-    }
-  });
+  // The auth-strict rate limiter (10 logins / 15 min) is asserted in
+  // tests/integration/rate_limit.test.ts, which builds an app AFTER setting
+  // __FORCE_RATE_LIMIT_TEST__ so the real ceiling applies. It cannot be tested
+  // from this file: `const app = createApp()` above runs at import time, before
+  // any test can set the flag, so every limiter here was constructed with
+  // max = 9,999,999.
 
   it('POST /api/v1/auth/forgot-password returns same success for both existing and non-existing email (no enumeration)', async () => {
     const existingRes = await request(app)

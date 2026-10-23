@@ -9,6 +9,7 @@
  * Never read process.env directly in application code.
  */
 import "dotenv/config";
+import path from "node:path";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -68,6 +69,19 @@ const envSchema = z.object({
   TOTP_ENCRYPTION_KEY: z.string().optional(),
   // Shown in the authenticator app next to the account name.
   TOTP_ISSUER: z.string().default("Business Suite"),
+
+  // ── File uploads ───────────────────────────────────────────────────
+  // Directory product images are written to. Relative paths resolve against
+  // the process working directory (backend/ in dev, /app in the container).
+  // Deliberately outside src/ and dist/ so a rebuild cannot delete user data;
+  // in Docker it is backed by a named volume (see docker-compose.yml).
+  UPLOAD_DIR: z.string().default("uploads"),
+  // Hard cap, enforced by multer BEFORE anything is written to disk, and by
+  // express.json's own 10mb limit further down the stack.
+  UPLOAD_MAX_BYTES: z
+    .string()
+    .default("2097152")
+    .refine((v) => !Number.isNaN(parseInt(v, 10)), "UPLOAD_MAX_BYTES must be numeric"),
 });
 
 const raw = envSchema.safeParse(process.env);
@@ -157,6 +171,19 @@ export const CONFIG = {
     periodSec: 30,
     /** Recovery codes handed out at enrolment. */
     recoveryCodeCount: 10,
+  },
+  /**
+   * Product image storage. Uploads are served by Express itself at
+   * `uploads.publicPath`, which keeps them under the existing `/api/` nginx
+   * location — no extra nginx rule, and the same DB row works in dev (:5000),
+   * Docker and production.
+   */
+  uploads: {
+    /** Absolute directory on disk. */
+    dir: path.resolve(raw.data.UPLOAD_DIR),
+    /** URL prefix Express serves `dir` from. */
+    publicPath: "/api/v1/uploads",
+    maxBytes: parseInt(raw.data.UPLOAD_MAX_BYTES, 10),
   },
 } as const;
 

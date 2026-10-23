@@ -85,6 +85,73 @@ const GRANT_BY_ROLE: Record<string, string[]> = {
   ],
 };
 
+/**
+ * Standard master data. Without these a fresh install has permissions but
+ * nothing to act on: the leave-type picker is empty so no request can be
+ * filed, and an employee cannot be given a department or designation.
+ */
+const LEAVE_TYPES = [
+  { code: "CASUAL", name: "Casual Leave", defaultDays: 12, maxCarryOver: 0, requiresDocuments: false, description: "Short-notice personal time off." },
+  { code: "SICK", name: "Sick Leave", defaultDays: 10, maxCarryOver: 0, requiresDocuments: true, description: "Medical absence; a supporting document may be required." },
+  { code: "ANNUAL", name: "Annual Leave", defaultDays: 20, maxCarryOver: 5, requiresDocuments: false, description: "Planned vacation entitlement." },
+  { code: "UNPAID", name: "Unpaid Leave", defaultDays: 0, maxCarryOver: 0, requiresDocuments: false, description: "Leave without pay beyond the paid entitlement." },
+];
+
+const DEPARTMENTS = [
+  { code: "ADMIN", name: "Administration", description: "Company administration and back office." },
+  { code: "SALES", name: "Sales", description: "Sales, counter service and customer accounts." },
+];
+
+const DESIGNATIONS = [
+  { code: "MGR", name: "Manager", departmentCode: "ADMIN" },
+  { code: "SALES-EXEC", name: "Sales Executive", departmentCode: "SALES" },
+];
+
+async function seedMasterData() {
+  console.log(`\n[hrm-seed] Upserting ${LEAVE_TYPES.length} leave types...`);
+  for (const lt of LEAVE_TYPES) {
+    await prisma.leaveType.upsert({
+      where: { code: lt.code },
+      update: {},
+      create: {
+        code: lt.code,
+        name: lt.name,
+        description: lt.description,
+        defaultDays: lt.defaultDays,
+        maxCarryOver: lt.maxCarryOver,
+        requiresDocuments: lt.requiresDocuments,
+      },
+    });
+  }
+
+  console.log(`[hrm-seed] Upserting ${DEPARTMENTS.length} departments...`);
+  const departmentIdByCode: Record<string, string> = {};
+  for (const d of DEPARTMENTS) {
+    const row = await prisma.department.upsert({
+      where: { code: d.code },
+      update: {},
+      create: { code: d.code, name: d.name, description: d.description },
+      select: { id: true },
+    });
+    departmentIdByCode[d.code] = row.id;
+  }
+
+  console.log(`[hrm-seed] Upserting ${DESIGNATIONS.length} designations...`);
+  for (const d of DESIGNATIONS) {
+    await prisma.designation.upsert({
+      where: { code: d.code },
+      update: {},
+      create: {
+        code: d.code,
+        name: d.name,
+        departmentId: departmentIdByCode[d.departmentCode] ?? null,
+      },
+    });
+  }
+
+  console.log("  ✅ master data ready");
+}
+
 async function main() {
   console.log(`[hrm-seed] Upserting ${HRM_PERMISSIONS.length} hrm.* permission codes (additive only — no delete)...`);
   for (const perm of HRM_PERMISSIONS) {
@@ -129,6 +196,8 @@ async function main() {
     await prisma.rolePermission.createMany({ data: rows, skipDuplicates: true });
     console.log(`  ✅ ${roleName}: ${rows.length} hrm.* codes granted (additive; existing untouched)`);
   }
+
+  await seedMasterData();
 
   console.log(`\n✅ Phase 8 HRM seed complete. ${HRM_PERMISSIONS.length} codes; 7 role tiers applied. Re-login to refresh JWT permissions!`);
 }

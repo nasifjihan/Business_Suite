@@ -21,11 +21,13 @@ import { GlobalModal } from "@/components/feedback/GlobalModal";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { GlobalInput } from "@/components/form/GlobalInput";
 import { GlobalSelect } from "@/components/form/GlobalSelect";
+import { ImageUploadField } from "@/components/form/ImageUploadField";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { DateDisplay } from "@/components/common/DateDisplay";
 import { MoneyDisplay } from "@/components/common/MoneyDisplay";
 import { PermissionGate, useHasPermission } from "@/components/auth/PermissionGate";
 import { createColumns, type TableFeatures } from "@/lib/table-utils";
+import { resolveAssetUrl } from "@/lib/utils";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   useListProductsQuery,
@@ -216,15 +218,17 @@ export default function ProductsPage() {
   };
 
   const onSubmitCreate = async (v: ProductFormValues) => {
+    // `sku` is deliberately absent: the API generates it from its own sequence
+    // and the field is read-only in the form. Empty category means "uncategorised",
+    // which the API takes as an absent key rather than an empty uuid.
     const body: CreateProductRequest = {
       name: v.name,
-      sku: (v.sku ?? undefined) as string | undefined,
       barcode: (v.barcode ?? undefined) as string | undefined,
-      categoryId: (v.categoryId ?? undefined) as string | undefined,
+      categoryId: (v.categoryId || undefined) as string | undefined,
       status: v.status,
       unitOfMeasure: v.unit || undefined,
-      costPrice: parseNum(v.costPrice),
-      unitPrice: parseNum(v.sellingPrice),
+      costPrice: parseNum(v.costPrice) ?? 0,
+      unitPrice: parseNum(v.sellingPrice) ?? 0,
       weightKg: parseNum(v.weight),
       description: (v.description ?? undefined) as string | undefined,
     };
@@ -240,13 +244,12 @@ export default function ProductsPage() {
       id: modal.product.id,
       body: {
         name: v.name,
-        sku: (v.sku ?? undefined) as string | undefined,
         barcode: (v.barcode ?? undefined) as string | undefined,
-        categoryId: (v.categoryId ?? undefined) as string | undefined,
+        categoryId: (v.categoryId || undefined) as string | undefined,
         status: v.status,
         unitOfMeasure: v.unit || undefined,
-        costPrice: parseNum(v.costPrice),
-        unitPrice: parseNum(v.sellingPrice),
+        costPrice: parseNum(v.costPrice) ?? 0,
+        unitPrice: parseNum(v.sellingPrice) ?? 0,
         weightKg: parseNum(v.weight),
         description: (v.description ?? undefined) as string | undefined,
       },
@@ -282,21 +285,41 @@ export default function ProductsPage() {
       col.display({
         id: "name",
         header: "Product",
-        cell: ({ row: { original: p } }) => (
-          <div className="min-w-0">
-            <p className="font-semibold text-foreground truncate">{p.name}</p>
-            {p.description && (
-              <p className="text-xs text-muted-foreground truncate max-w-[36ch] mt-0.5">
-                {p.description}
-              </p>
-            )}
-            {!p.description && p.barcode && (
-              <p className="text-xs text-muted-foreground truncate font-mono">
-                {p.barcode}
-              </p>
-            )}
-          </div>
-        ),
+        cell: ({ row: { original: p } }) => {
+          const image = resolveAssetUrl(p.imageUrl);
+          return (
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-border bg-slate-50 dark:bg-slate-900/60 flex items-center justify-center">
+                {image ? (
+                  /* eslint-disable-next-line @next/next/no-img-element -- uploads
+                     are served by the API from a different origin in dev, which
+                     would need a remotePatterns entry per host. */
+                  <img
+                    src={image}
+                    alt=""
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <Package className="w-4 h-4 text-slate-400" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground truncate">{p.name}</p>
+                {p.description && (
+                  <p className="text-xs text-muted-foreground truncate max-w-[36ch] mt-0.5">
+                    {p.description}
+                  </p>
+                )}
+                {!p.description && p.barcode && (
+                  <p className="text-xs text-muted-foreground truncate font-mono">
+                    {p.barcode}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        },
       }),
       col.display({
         id: "category",
@@ -637,6 +660,15 @@ export default function ProductsPage() {
           className="space-y-4"
           noValidate
         >
+          {/* Only possible on the edit form: an upload needs a product id, and
+              in the create form the row does not exist until the POST returns. */}
+          {modal.kind === "edit" && (
+            <ImageUploadField
+              productId={modal.product.id}
+              currentUrl={modal.product.imageUrl}
+              disabled={!canUpdate}
+            />
+          )}
           <div className="grid grid-cols-2 gap-4">
             <GlobalInput
               label="SKU"

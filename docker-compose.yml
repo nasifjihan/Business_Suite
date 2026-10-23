@@ -78,8 +78,22 @@ services:
       # otherwise pass the literal string "TOTP_ENCRYPTION_KEY" through.
       TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
       TOTP_ISSUER: ${TOTP_ISSUER:-Business Suite}
+      # ── File uploads ────────────────────────────────────────────────
+      # UPLOAD_DIR is an absolute path inside the container. Keep it in step
+      # with the uploads volume mount below: point it somewhere else and every
+      # uploaded image is written outside the volume and lost on rebuild.
+      # The image lands here, and nginx already forwards /api/ to this service,
+      # so /api/v1/uploads/<file> resolves through port 80 with no extra rule.
+      UPLOAD_DIR: /app/uploads
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-2097152}
     ports:
       - "4000:4000"
+    volumes:
+      # Named volume, not a bind mount: uploaded product images must outlive
+      # `docker compose up -d --build`, which replaces the container's writable
+      # layer. Without this, every image 404s after a rebuild while the DB rows
+      # still point at them.
+      - uploads:/app/uploads
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
       interval: 30s
@@ -154,6 +168,8 @@ services:
 volumes:
   pgdata:
     name: bs-pgdata
+  uploads:
+    name: bs-uploads
 
 networks:
   bsnet:

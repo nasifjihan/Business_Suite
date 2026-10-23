@@ -596,6 +596,10 @@ model Product {
   categoryId    String?
   status        ProductStatus @default(ACTIVE)
   description   String?
+  // Relative path (e.g. /api/v1/uploads/<uuid>.png), never an absolute URL.
+  // A relative path keeps this row valid in dev (:5000), Docker and prod behind
+  // nginx, all of which serve the same file from a different origin.
+  imageUrl      String?
   costPrice     Decimal       @default(0) @db.Decimal(14, 2)
   unitPrice     Decimal       @default(0) @db.Decimal(14, 2)
   unitOfMeasure String        @default("EACH")

@@ -15,6 +15,7 @@
     "test:integration": "vitest run src/tests/integration",
     "test:coverage": "vitest run --coverage",
     "seed": "ts-node prisma/seed.ts",
+    "seed:e2e": "ts-node prisma/seed_e2e.ts",
     "prisma:deploy": "prisma migrate deploy",
     "start:prod": "node dist/server.js",
     "health:check": "node -e \"fetch('http://localhost:'+(process.env.PORT||4000)+'/health').then(r=>r.json()).then(j=>console.log(JSON.stringify(j,null,2))).catch(e=>{console.error('DOWN:', e.message); process.exit(1);})\""
@@ -51,6 +52,7 @@
     "helmet": "^8.1.0",
     "http-status-codes": "^2.3.0",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.5.0",
     "nodemailer": "^10.2.1",
     "otplib": "^13.5.0",
     "pg": "^8.15.6",
@@ -66,6 +68,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.9",
+    "@types/multer": "^2.3.0",
     "@types/node": "^22.15.17",
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.11.17",

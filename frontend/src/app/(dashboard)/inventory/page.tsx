@@ -31,14 +31,13 @@ const extract = <T,>(resp?: { success: true; data: { items: T[]; meta: unknown }
   resp?.data ?? { items: [] as T[], meta: undefined };
 
 const MOVEMENT_TYPE_TONE: Record<MovementType, "emerald" | "rose" | "slate" | "sky" | "violet" | "teal"> = {
-  RECEIPT: "emerald",
-  PURCHASE: "emerald",
-  RETURN: "emerald",
-  ISSUE: "rose",
-  SALE: "rose",
+  IN: "emerald",
+  OUT: "rose",
   TRANSFER_IN: "sky",
   TRANSFER_OUT: "sky",
-  ADJUSTMENT: "violet",
+  ADJUST: "violet",
+  COUNT: "teal",
+  SCRAP: "rose",
 };
 
 const PRODUCT_STATUS_TONE = {

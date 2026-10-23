@@ -428,15 +428,6 @@ export type CreditListItem = {
   totalSpent: number | string;
 };
 
-export type CreditDetail = CreditListItem & {
-  customerId: string;
-  creditLimit: number | string;
-  availableCredit: number | string;
-  currency: string;
-  lastTransactionAt: string | null;
-  transactions?: CreditTransaction[];
-};
-
 export type CreditTransaction = {
   id: string;
   customerId: string;
@@ -481,20 +472,6 @@ export type AdjustCreditResponse = {
   adjustmentAmount: number | string;
   newBalance: number | string;
   transaction: CreditTransaction;
-};
-
-export type ListCreditTransactionsArgs = {
-  customerId: string;
-  page?: number;
-  pageSize?: number;
-  type?: CreditTransaction["type"];
-  dateFrom?: string;
-  dateTo?: string;
-};
-
-export type ListCreditTransactionsResponse = {
-  items: CreditTransaction[];
-  meta: PaginationMeta;
 };
 
 export const salesApi = apiSlice.injectEndpoints({
@@ -608,14 +585,6 @@ export const salesApi = apiSlice.injectEndpoints({
       query: (args) => ({ url: "/sales/credits", params: args ?? {} }),
       providesTags: ["Credits"],
     }),
-    getCreditByCustomerId: builder.query<Envelope<CreditDetail>, string>({
-      query: (customerId) => ({
-        url: `/sales/credits/customer/${customerId}`,
-      }),
-      providesTags: (_, __, customerId) => [
-        { type: "Credits", id: customerId },
-      ],
-    }),
     adjustCredit: builder.mutation<
       Envelope<AdjustCreditResponse>,
       AdjustCreditRequest
@@ -626,27 +595,6 @@ export const salesApi = apiSlice.injectEndpoints({
         body,
       }),
       invalidatesTags: ["Credits", "Reports"],
-    }),
-    listCreditTransactions: builder.query<
-      Envelope<ListCreditTransactionsResponse>,
-      ListCreditTransactionsArgs
-    >({
-      query: ({ customerId, ...args }) => ({
-        url: `/sales/credits/customer/${customerId}/transactions`,
-        params: args,
-      }),
-      providesTags: ["Credits"],
-    }),
-
-    listOrderItemsByOrderId: builder.query<
-      Envelope<{ items: OrderItem[] }>,
-      string
-    >({
-      query: (orderId) => ({ url: `/sales/orders/${orderId}/items` }),
-      providesTags: (_, __, orderId) => [
-        "OrderItems",
-        { type: "Orders", id: orderId },
-      ],
     }),
   }),
   overrideExisting: false,
@@ -674,9 +622,5 @@ export const {
   useGetDailySummaryQuery,
 
   useListCreditsQuery,
-  useGetCreditByCustomerIdQuery,
   useAdjustCreditMutation,
-  useListCreditTransactionsQuery,
-
-  useListOrderItemsByOrderIdQuery,
 } = salesApi;

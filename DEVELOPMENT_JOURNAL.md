@@ -484,3 +484,156 @@ branch to be handled.
 **Gate met.** Left for Phase 7: document `TOTP_ENCRYPTION_KEY` / `TOTP_ISSUER` in
 the README env table.
 
+---
+
+## 2026-10-23 — Phase 5: product image upload
+
+`Product` was the only catalog entity with no image column, while the UI's
+detail page drew a gradient placeholder and the spec had already named the
+constraints (PNG/JPG/WebP, 2 MB, UUID filenames). This phase adds the column,
+the upload path, the serving path, and the two UI touch points.
+
+### Decision — serve uploads from Express, not nginx
+
+The plan's step 5 said: mount static at `/uploads` and add a `location` to
+`nginx.conf`. That was superseded, and the reason is worth recording because it
+was the one place this phase diverged from its own plan.
+
+`nginx.conf` already has `location /api/ { proxy_pass http://backend:4000; }`.
+Mounting the static handler at **`/api/v1/uploads`** therefore needs *no nginx
+change whatsoever* — the images ride the existing proxy rule. The alternative, a
+second top-level `/uploads` location, would have introduced a second path
+prefix the frontend had to know about, and a second nginx block to keep in sync
+with the backend.
+
+That in turn is what makes the **relative path** viable. `imageUrl` stores
+`/api/v1/uploads/<uuid>.png`, never an absolute URL, so one database row is
+correct in all three places the app runs (dev `:5000`, Docker via nginx, real
+production). The cost lands on the frontend — see `resolveAssetUrl` below — and
+it is a small, one-time cost paid for a row that never has to be migrated.
+
+### The extension comes from the bytes, not the filename
+
+`detectImageType()` checks magic bytes: the 8-byte PNG signature, `FF D8 FF` for
+JPEG, `RIFF....WEBP` for WebP. The client's `Content-Type` and filename are
+ignored for anything but display. A file called `logo.png` that is really a JPEG
+is stored as `<uuid>.jpg` and served as `image/jpeg`; there is a test asserting
+exactly that. Filenames are server-generated UUIDs, so a crafted name cannot
+escape the upload directory or overwrite an existing file — and
+`deleteImageByUrl()` still double-guards, with `path.basename()` plus a
+`startsWith(resolve(dir) + sep)` check, because a path helper that can only ever
+be handed a UUID should not be *relied upon* to only ever be handed a UUID.
+
+### `authorize()` before `multer`, and memory rather than disk
+
+The route is
+`authorize("inventory.products.update") → uploadSingleImage("file") → controller`.
+Order matters: an unauthenticated or unauthorised caller is rejected before a
+single byte of their body is buffered.
+
+`multer.memoryStorage()` rather than `diskStorage()`. With a 2 MB cap the whole
+file fits comfortably in memory, and buffering means a rejected upload (wrong
+type, bad size, failed transaction) leaves **nothing** on disk to clean up. The
+disk variant writes the file first and then needs an unlink on every rejection
+path — including the ones that throw before reaching the handler.
+
+The size cap is enforced by multer *before* the bytes are written anywhere, and
+the resulting `MulterError` is translated to a project-standard envelope: an
+`AppError` with `StatusCodes.REQUEST_TOO_LONG` (413 — the constant is named
+`REQUEST_TOO_LONG`; there is no `CONTENT_TOO_LARGE` export in
+`http-status-codes`) plus a `PAYLOAD_TOO_LARGE` code in `errorHandler`.
+
+### Ordering: write the file, then the row
+
+The service writes the file first, then updates the row inside a transaction
+that also writes the audit entry — matching what `ProductService.update` already
+does.
+
+- The file is written **before** the row, so a rejected image never leaves a row
+  pointing at a file that does not exist.
+- If the transaction fails, the new file is deleted and the row still points at
+  the old one.
+- The **previous** file is deleted only **after** commit, and best-effort: at
+  that point nothing references it, and failing to delete it must not turn a
+  successful upload into an error.
+
+### The static mount sits above the rate limiter
+
+`standardLimiter` allows 100 requests per 15 minutes. A product grid showing 24
+thumbnails would spend a quarter of that budget merely by rendering, pushing
+normal use into `429`s. The static mount is therefore registered **before** the
+limiter, so image traffic does not compete with the API calls the limiter exists
+to protect. The comment in `app.ts` says so, since the order looks arbitrary
+otherwise.
+
+### The Dockerfile must own the upload directory
+
+`UPLOAD_DIR=/app/uploads` in compose, backed by the `bs-uploads` named volume.
+The subtlety: Docker seeds a **brand-new** named volume from the image's
+directory contents and ownership. If `/app/uploads` does not exist in the image,
+the volume is created root-owned, and every upload then fails `EACCES` **while
+the container healthcheck still reports healthy** — a failure that only shows up
+on the first real upload. So the Dockerfile does
+`RUN mkdir -p /app/uploads && chown -R nodeuser:nodegrp /app`.
+
+### Frontend: `resolveAssetUrl`
+
+Storing a relative path moves one problem to the browser. In dev the UI is on
+`:3000` and the API is on `:5000`, so `<img src="/api/v1/uploads/x.png">` would
+resolve against `:3000` and 404. `resolveAssetUrl()` takes the origin from
+`NEXT_PUBLIC_API_URL` (which always ends in `/api/v1`, and uploads share its
+origin) and prefixes it; when that URL is itself relative — the nginx case — the
+stored path is already correct and is returned unchanged.
+
+The new `ImageUploadField` mirrors the server's type and size checks purely as a
+courtesy, so an obviously wrong file never leaves the browser; the server repeats
+both and is the only one enforcing them. It is wired into the **edit** forms
+only: an upload needs a product id, and in the create form the row does not exist
+until the POST returns.
+
+### Problems hit
+
+**1. `migrate dev` only migrates the development database.** All 10 new tests
+failed with Prisma `P2022` — "The column `Product.imageUrl` does not exist in
+the current database" — cascading into `TypeError: Cannot read properties of
+undefined (reading 'id')`. The migration had been applied to `bs_db`, but the
+test suite runs against `bs_test`, which had never seen it. Fixed with
+`npx prisma migrate deploy` pointed at `bs_test`, verified directly in `psql`
+against both `_prisma_migrations` and `information_schema.columns`. This is the
+same family of trap as Phase 4's stale-client lesson: `migrate dev` is
+dev-only, and each environment carries its own schema state.
+
+**2. `UPLOAD_DIR` could not be set from `src/tests/setup.ts`.** The first attempt
+set it there and had no effect. `setup.ts`'s imports are hoisted above its
+statements, so `config/env.ts` — which resolves `UPLOAD_DIR` to an absolute path
+once, at import — had already run. Moved into `vitest.config.ts`'s `test.env`,
+which Vitest applies *before any module import*, matching the existing
+`DATABASE_URL` entry and its comment.
+
+**3. PowerShell strips quotes from JSON passed to a native command.** The first
+gate run returned `Expected property name or '}' in JSON at position 1` from
+`body-parser` — PowerShell 5 had handed `curl.exe` a body with the quotes
+removed, so `{"email":...}` arrived as `{email:...}`. Wrote the body to a file
+and used `--data-binary "@file"` instead.
+
+### Result
+
+| Suite | Before | After |
+|---|---|---|
+| backend `npm test` | 64 passed, 7 skipped | **74 passed, 7 skipped** (12 files) |
+| frontend `npm test` | 44 passed | **44 passed** (7 files) |
+| backend `tsc --noEmit` | 0 errors | 0 errors |
+| frontend `tsc --noEmit` | 0 errors | 0 errors |
+
+**Gate met, against the real stack.** Through nginx on port 80: login → upload a
+genuine PNG to the first seeded product → the response carried
+`/api/v1/uploads/1dc9f142-….png` → `GET` on that path returned
+`200 image/png` (70 bytes) → the product row held the same relative path. Then
+`docker compose up -d --build`, all four containers recreated and healthy, and
+the **same URL still returned `200 image/png`** — which is the half of the gate
+the volume exists for. Probe script and temp files were deleted afterwards; the
+repo has no trace.
+
+Left for Phase 7: the README env table needs `UPLOAD_DIR` / `UPLOAD_MAX_BYTES`
+and the `uploads` volume.
+

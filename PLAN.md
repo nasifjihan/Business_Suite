@@ -1,6 +1,6 @@
 # Business Suite — Completion Plan (V2)
 
-> **Status:** In progress — Phases 0–4 complete
+> **Status:** In progress — Phases 0–5 complete
 > **Created:** 2026-10-23
 > **Predecessor:** Phases 0–14 (see [BUILD_PROCESS.md](BUILD_PROCESS.md))
 > **Log:** [DEVELOPMENT_JOURNAL.md](DEVELOPMENT_JOURNAL.md)
@@ -28,7 +28,7 @@ code it describes has stopped moving.
 | 2 | Security — scrub committed credential | Fix | ✅ Done (+ onboarding fix) |
 | 3 | Email delivery — real SMTP for password reset | Feature | ✅ Done |
 | 4 | Two-factor authentication (TOTP) | Feature | ✅ Done |
-| 5 | Product image upload | Feature | ☐ |
+| 5 | Product image upload | Feature | ✅ Done |
 | 6 | Playwright end-to-end suite | Test | ☐ (+ 7 skipped tests to resolve) |
 | 7 | Documentation reconciliation | Docs | ☐ (4 more corrections found) |
 | 8 | Final end-to-end verification | Gate | ☐ |
@@ -190,34 +190,71 @@ Deferred to Phase 7: README env table needs the 2 new TOTP vars.
 
 ---
 
-## Phase 5 — Product image upload
+## Phase 5 — Product image upload ✅ COMPLETE
 
-`Product` has **no `imageUrl` column** (unlike `Employee`, which has one). The
+`Product` had **no `imageUrl` column** (unlike `Employee`, which has one). The
 spec already fixed the guardrails: PNG/JPG/WebP only, 2 MB max, UUID filenames.
 
-**Decision — local disk in dev, path stored in the DB.** Storage sits behind a
-single module so it can move to S3-compatible later without touching callers.
-Store only the relative path in `imageUrl`, never an absolute URL, so the same
-row works in dev, Docker and production.
+**Decision — local disk in dev, relative path stored in the DB.** Storage sits
+behind a single module so it can move to S3-compatible later without touching
+callers. Store only the relative path in `imageUrl`, never an absolute URL, so
+the same row works in dev, Docker and production.
 
-Steps:
-1. Migration: `imageUrl String?` on `Product`.
-2. `npm i multer` + types.
-3. `backend/src/lib/uploads.ts` — UUID filenames, extension allow-list,
-   **magic-byte check** (a `.png` extension is not proof of a PNG), 2 MB cap.
-   Validate at the boundary; never trust the client `mimetype`.
-4. `POST /api/v1/inventory/products/:id/image` guarded by the **existing**
-   `inventory.products.update` permission — no new permission code, so the
-   143-code RBAC matrix is untouched.
-5. Serve uploads: mount static at `/uploads` and add the location to
-   `nginx.conf` (it currently only routes `/api` and `/health`).
-6. Docker: named volume for the uploads directory, or images vanish on rebuild.
-7. Frontend: upload control in the product form, thumbnail in list + detail.
-   Reuse the shared image-size/type constants.
-8. Tests: rejects oversize, rejects wrong type, rejects a spoofed extension,
-   accepts a valid PNG.
+| File | Change |
+|---|---|
+| `backend/prisma/schema.prisma` | +`Product.imageUrl String?` |
+| `prisma/migrations/20261023031734_add_product_image_url/` | **New** — additive only |
+| `backend/src/lib/uploads.ts` | **New** — magic-byte sniffing, UUID names, 2 MB cap, multer wrapper |
+| `backend/src/config/env.ts` | +`UPLOAD_DIR`, `UPLOAD_MAX_BYTES` + `CONFIG.uploads` |
+| `backend/src/modules/inventory/products/services.ts` | +`uploadImage()`; `imageUrl` added to the list `select` |
+| `backend/src/modules/inventory/products/controllers.ts` | +`uploadImage` handler |
+| `backend/src/modules/inventory/products/routes.ts` | +`POST /:id/image`, guarded by the existing `inventory.products.update` |
+| `backend/src/app.ts` | static mount at `/api/v1/uploads`, **above** the rate limiter |
+| `backend/src/middleware/errorHandler.ts` | +`PAYLOAD_TOO_LARGE` for 413 |
+| `backend/src/tests/unit/inventory_product_images.test.ts` | **New** — 10 tests |
+| `backend/vitest.config.ts` | `UPLOAD_DIR=uploads-test` in `test.env` |
+| `backend/.env.example`, `.gitignore` | upload vars documented; `uploads*/` ignored |
+| `backend/Dockerfile` | `/app/uploads` created and `nodeuser`-owned |
+| `docker-compose.yml` | `UPLOAD_DIR=/app/uploads`, `uploads` named volume |
+| `frontend/src/lib/utils.ts` | +`resolveAssetUrl()` |
+| `frontend/src/components/form/ImageUploadField.tsx` | **New** — preview, client pre-check, upload |
+| `frontend/src/lib/api/inventoryEndpoints.ts` | +`uploadProductImage` mutation |
+| `frontend/.../inventory/products/page.tsx` | thumbnail column + upload in the edit modal |
+| `frontend/.../inventory/products/[id]/page.tsx` | real image replaces the gradient placeholder + upload in the edit modal |
 
-**Gate:** upload → thumbnail renders → survives a `docker compose up -d --build`.
+**Step 5 was deliberately superseded.** The plan said to mount static at
+`/uploads` and add an nginx `location`. Instead uploads are served by Express at
+`/api/v1/uploads`: nginx already forwards `/api/` to the backend, so **no nginx
+change is needed at all**, and the stored relative path resolves identically in
+dev (`:5000`), Docker and production. Adding a second, separate `/uploads`
+location would have meant a second path the frontend had to know about.
+
+**Key design points**
+- **Magic bytes, not the filename.** The stored extension comes from the sniffed
+  signature, never the client's `mimetype` or filename — a test asserts a JPEG
+  named `.png` is stored as `.jpg` and served as `image/jpeg`.
+- **`authorize()` runs before `multer`.** An unauthenticated or unauthorised
+  caller is rejected before their bytes are buffered.
+- **`memoryStorage`, not `diskStorage`.** At a 2 MB cap, buffering is simpler
+  and leaves no orphaned files on the disk when a request is rejected.
+- **Ordering.** The file is written *before* the row and deleted if the
+  transaction fails; the previous file is deleted only *after* commit.
+- **Static mount sits above the rate limiter.** A 24-thumbnail grid would
+  otherwise spend a quarter of the 100-request/15-minute budget just rendering.
+- **The Dockerfile must own the upload directory.** Docker seeds a *brand-new*
+  named volume from the image's directory — without `mkdir`+`chown`, the volume
+  is root-owned and every upload fails `EACCES` while the healthcheck still
+  reports healthy.
+
+**Gate met:** through nginx, `POST /inventory/products/:id/image` stored
+`/api/v1/uploads/<uuid>.png`, `GET` on that path returned `200 image/png`, the
+row held the same relative path, and after `docker compose up -d --build` the
+URL still returned `200 image/png` (70 bytes). `tsc --noEmit` 0 errors both
+sides; backend `npm test` **74 passed, 7 skipped** (was 64 — the 10 new tests);
+frontend `npm test` **44 passed**.
+
+Deferred to Phase 7: README env table needs `UPLOAD_DIR` / `UPLOAD_MAX_BYTES`,
+and the compose file's `uploads` volume.
 
 ---
 

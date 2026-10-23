@@ -81,9 +81,16 @@ export type ContactItem = {
   customerId: string;
   firstName: string;
   lastName: string;
-  jobTitle: string | null;
+  /**
+   * The API stores this column as `designation`; the UI labels it
+   * "Job Title". The field is named after the API so the payload never has to
+   * be rewritten on the way out.
+   */
+  designation: string | null;
+  department?: string | null;
   email: string | null;
   phone: string | null;
+  mobile?: string | null;
   isPrimary: boolean;
   notes: string | null;
   createdAt: string;
@@ -434,11 +441,14 @@ export const crmApi = apiSlice.injectEndpoints({
       Envelope<ContactItem>,
       {
         customerId: string;
-        body: Omit<CreateCustomerRequest, never> & {
+        // A contact is not a customer; it has no `name` (the API builds the
+        // display name from firstName + lastName) and no customer-only fields.
+        body: {
           firstName: string;
           lastName: string;
           email?: string;
           phone?: string;
+          mobile?: string;
           designation?: string;
           department?: string;
           isPrimary?: boolean;

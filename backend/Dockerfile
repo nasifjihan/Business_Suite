@@ -28,7 +28,13 @@ ENV NODE_ENV=production \
   NPM_CONFIG_MAXSOCKETS=3
 
 WORKDIR /app
-RUN chown -R nodeuser:nodegrp /app
+# /app/uploads is where product images are written (UPLOAD_DIR in
+# docker-compose.yml). It must exist in the image and be owned by nodeuser
+# BEFORE the uploads volume is first mounted: Docker seeds a brand-new named
+# volume from the image's directory contents and ownership. Without this the
+# volume is created root-owned, and every upload fails with EACCES while the
+# healthcheck still reports healthy.
+RUN mkdir -p /app/uploads && chown -R nodeuser:nodegrp /app
 
 # ================================
 # STAGE 2/4: DEPS

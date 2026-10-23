@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { ProductService } from "./services";
 import { successResponse } from "@/lib/response";
+import { BadRequestError } from "@/lib/errors";
 import type { ListLowStockQuery, ListProductsQuery } from "./validators";
 
 export const ProductsController = {
@@ -56,6 +57,20 @@ export const ProductsController = {
       const id = req.params.id as string;
       const updated = await ProductService.update(id, req.body, req);
       return successResponse(res, updated, 200, "Product updated successfully");
+    } catch (e) {
+      next(e);
+    }
+  },
+
+  async uploadImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      // The route's multer middleware parses the multipart part named "file".
+      // Its absence means the request carried no file at all — a client bug,
+      // not a server fault.
+      if (!req.file) throw new BadRequestError('Attach an image in the "file" field.');
+      const id = req.params.id as string;
+      const product = await ProductService.uploadImage(id, req.file.buffer, req);
+      return successResponse(res, product, 200, "Product image uploaded successfully");
     } catch (e) {
       next(e);
     }

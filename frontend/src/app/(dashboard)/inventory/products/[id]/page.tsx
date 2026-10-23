@@ -30,11 +30,13 @@ import { GlobalModal } from "@/components/feedback/GlobalModal";
 import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { GlobalInput } from "@/components/form/GlobalInput";
 import { GlobalSelect } from "@/components/form/GlobalSelect";
+import { ImageUploadField } from "@/components/form/ImageUploadField";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { DateDisplay } from "@/components/common/DateDisplay";
 import { MoneyDisplay } from "@/components/common/MoneyDisplay";
 import { PermissionGate, useHasPermission } from "@/components/auth/PermissionGate";
 import { createColumns, type TableFeatures } from "@/lib/table-utils";
+import { resolveAssetUrl } from "@/lib/utils";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   useGetProductQuery,
@@ -66,25 +68,23 @@ const PRODUCT_STATUS_TONE: Record<ProductStatus, "emerald" | "rose" | "slate"> =
 };
 
 const MOVEMENT_TYPE_TONE: Record<MovementType, "emerald" | "rose" | "sky" | "violet" | "teal" | "slate"> = {
-  RECEIPT: "emerald",
-  PURCHASE: "emerald",
-  RETURN: "emerald",
-  ISSUE: "rose",
-  SALE: "rose",
+  IN: "emerald",
+  OUT: "rose",
   TRANSFER_IN: "sky",
   TRANSFER_OUT: "sky",
-  ADJUSTMENT: "violet",
+  ADJUST: "violet",
+  COUNT: "teal",
+  SCRAP: "rose",
 };
 
 const MOVEMENT_TYPE_LABEL: Record<MovementType, string> = {
-  RECEIPT: "Stock In",
-  PURCHASE: "Purchase",
-  RETURN: "Return In",
-  ISSUE: "Stock Out",
-  SALE: "Sale Out",
+  IN: "Stock In",
+  OUT: "Stock Out",
   TRANSFER_IN: "Transfer In",
   TRANSFER_OUT: "Transfer Out",
-  ADJUSTMENT: "Adjustment",
+  ADJUST: "Adjustment",
+  COUNT: "Stock Count",
+  SCRAP: "Scrap",
 };
 
 const UNIT_OF_MEASURE_OPTIONS = [
@@ -238,7 +238,7 @@ export default function ProductDetailPage() {
   }, [stockSummary?.warehouses, productDetail?.minStockLevel]);
 
   const handleQuickMovement = useCallback(
-    async (warehouseId: string, movementType: "RECEIPT" | "ISSUE", quantity: number) => {
+    async (warehouseId: string, movementType: "IN" | "OUT", quantity: number) => {
       if (!id) return;
       await createMovementTrigger({
         productId: id,
@@ -321,7 +321,7 @@ export default function ProductDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleQuickMovement(w.warehouseId, "RECEIPT", 10)}
+                onClick={() => handleQuickMovement(w.warehouseId, "IN", 10)}
                 disabled={createMovementState.isLoading}
                 className="h-8 px-2 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900"
               >
@@ -330,7 +330,7 @@ export default function ProductDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleQuickMovement(w.warehouseId, "ISSUE", 10)}
+                onClick={() => handleQuickMovement(w.warehouseId, "OUT", 10)}
                 disabled={createMovementState.isLoading}
                 className="h-8 px-2 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-900"
               >
@@ -374,10 +374,9 @@ export default function ProductDetailPage() {
         header: "Qty",
         cell: ({ row: { original: m } }) => {
           const isIn =
-            m.movementType === "RECEIPT" ||
-            m.movementType === "PURCHASE" ||
-            m.movementType === "RETURN" ||
-            m.movementType === "TRANSFER_IN";
+            m.movementType === "IN" ||
+            m.movementType === "TRANSFER_IN" ||
+            m.movementType === "COUNT";
           return (
             <span
               className={`text-sm font-semibold tabular-nums ${
@@ -419,6 +418,8 @@ export default function ProductDetailPage() {
       }),
     ];
   }, []);
+
+  const productImage = resolveAssetUrl(productDetail?.imageUrl);
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -505,9 +506,20 @@ export default function ProductDetailPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="space-y-4 min-w-0">
                 <div className="flex flex-wrap items-start gap-3">
-                  <div className="h-16 w-16 shrink-0 rounded-2xl bg-gradient-to-br from-sky-500 to-violet-600 text-white flex items-center justify-center shadow-lg">
-                    <Package className="w-8 h-8" />
-                  </div>
+                  {productImage ? (
+                    /* eslint-disable-next-line @next/next/no-img-element -- uploads
+                       are served by the API from a different origin in dev, which
+                       would need a remotePatterns entry per host. */
+                    <img
+                      src={productImage}
+                      alt={productDetail?.name ?? "Product image"}
+                      className="h-16 w-16 shrink-0 rounded-2xl border border-border object-cover shadow-lg"
+                    />
+                  ) : (
+                    <div className="h-16 w-16 shrink-0 rounded-2xl bg-gradient-to-br from-sky-500 to-violet-600 text-white flex items-center justify-center shadow-lg">
+                      <Package className="w-8 h-8" />
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/60 px-2 py-0.5 font-mono text-[11px] text-slate-700 dark:text-slate-300">
@@ -707,6 +719,11 @@ export default function ProductDetailPage() {
           className="space-y-4"
           noValidate
         >
+          <ImageUploadField
+            productId={id}
+            currentUrl={productDetail?.imageUrl}
+            disabled={!canUpdate}
+          />
           <div className="grid grid-cols-2 gap-4">
             <GlobalInput
               label="SKU"

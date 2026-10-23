@@ -3,7 +3,11 @@ import { PaginationSchema } from "@/utils/pagination";
 import { LeaveStatus } from "@prisma/client";
 
 export const CreateLeaveSchema = z.object({
-  employeeId: z.string().uuid(),
+  // Optional on purpose. A self-service caller omits it and the service
+  // resolves their own employee record; a caller holding hrm.leave.read_all
+  // passes it to file leave on someone else's behalf. The service is what
+  // enforces which of the two a given caller is allowed to do.
+  employeeId: z.string().uuid().optional(),
   leaveTypeId: z.string().uuid(),
   startDate: z.coerce.date(),
   endDate: z.coerce.date(),

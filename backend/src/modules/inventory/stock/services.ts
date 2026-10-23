@@ -18,6 +18,17 @@ export const StockService = {
       ];
     }
 
+    // The Stock Levels table advertises "Search by product name, SKU, or
+    // warehouse…" and the UI has always sent `search`, but the endpoint quietly
+    // ignored it — the box looked like it worked and filtered nothing.
+    if (q.search) {
+      where.OR = [
+        { product: { name: { contains: q.search, mode: "insensitive" } } },
+        { product: { sku: { contains: q.search, mode: "insensitive" } } },
+        { warehouse: { name: { contains: q.search, mode: "insensitive" } } },
+      ];
+    }
+
     const orderBy: Record<string, unknown> = q.sortBy
       ? { [q.sortBy]: q.sortOrder }
       : { updatedAt: q.sortOrder };

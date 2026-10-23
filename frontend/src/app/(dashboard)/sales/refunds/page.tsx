@@ -25,7 +25,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import {
   useListRefundsQuery,
   useListOrdersQuery,
-  useListOrderItemsByOrderIdQuery,
+  useGetOrderByIdQuery,
   useCreateRefundMutation,
 } from "@/lib/api/salesEndpoints";
 import type {
@@ -159,11 +159,13 @@ export default function RefundsPage() {
   });
 
   const selectedOrderId = form.watch("orderId");
-  const { data: orderItemsRes } = useListOrderItemsByOrderIdQuery(selectedOrderId, {
+  // The API exposes an order's lines on the order resource itself; there is no
+  // standalone /orders/:id/items endpoint.
+  const { data: orderDetailRes } = useGetOrderByIdQuery(selectedOrderId, {
     skip: !selectedOrderId,
   });
 
-  const orderItems = (orderItemsRes?.data as any)?.items as OrderItem[] | undefined;
+  const orderItems = orderDetailRes?.data?.items as OrderItem[] | undefined;
 
   const orderItemOptions = useMemo(() => {
     if (!orderItems) return [];

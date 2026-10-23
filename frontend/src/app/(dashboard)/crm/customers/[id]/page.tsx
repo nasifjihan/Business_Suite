@@ -262,7 +262,7 @@ export default function CustomerDetailPage() {
         lastName: contactModal.contact.lastName,
         email: contactModal.contact.email ?? "",
         phone: contactModal.contact.phone ?? "",
-        jobTitle: contactModal.contact.jobTitle ?? "",
+        jobTitle: contactModal.contact.designation ?? "",
         isPrimary: contactModal.contact.isPrimary,
       });
     } else if (contactModal.kind === "create") {
@@ -329,7 +329,7 @@ export default function CustomerDetailPage() {
         phone: v.phone || undefined,
         designation: v.jobTitle || undefined,
         isPrimary: v.isPrimary,
-      } as any,
+      },
     });
     if ("data" in out && out.data?.success) {
       closeContactModal();
@@ -345,7 +345,7 @@ export default function CustomerDetailPage() {
         lastName: v.lastName,
         email: v.email || undefined,
         phone: v.phone || undefined,
-        jobTitle: v.jobTitle || undefined,
+        designation: v.jobTitle || undefined,
         isPrimary: v.isPrimary,
       },
     });
@@ -413,8 +413,8 @@ export default function CustomerDetailPage() {
               <p className="font-medium text-foreground text-sm truncate">
                 {c.firstName} {c.lastName}
               </p>
-              {c.jobTitle && (
-                <p className="text-xs text-muted-foreground truncate">{c.jobTitle}</p>
+              {c.designation && (
+                <p className="text-xs text-muted-foreground truncate">{c.designation}</p>
               )}
             </div>
           </div>

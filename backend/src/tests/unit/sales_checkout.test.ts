@@ -184,38 +184,49 @@ describe('Sales Checkout Module (GATE)', () => {
     expect(Number(res.body.data.order.totalAmount)).not.toBe(3000);
   });
 
-  it.skip('POST refund for valid order returns 200 success', async () => {
+  it('POST refund for a valid order returns 201 and restocks the returned quantity', async () => {
     const checkoutRes = await request(app)
       .post('/api/v1/sales/orders/checkout')
       .set('Authorization', `Bearer ${adminJwt}`)
       .send({
         customerId: customer.id,
         warehouseId: warehouse.id,
-        items: [{ productId: product.id, quantity: 2 }],
+        items: [{ productId: product.id, quantity: 2, discountAmount: 0, taxRatePercent: 0 }],
         payments: [{ amount: 20, method: 'CASH' }],
       });
-    const orderId = checkoutRes.body.data.id;
-    const orderItem = await prisma.orderItem.findFirst({ where: { orderId } });
-    const payment = await prisma.payment.findFirst({ where: { orderId } });
+    expect(checkoutRes.status).toBe(201);
 
-    if (!orderItem || !payment) {
-      throw new Error('orderItem or payment not found');
-    }
+    // Checkout answers with { data: { order, invoices } }, not the order itself.
+    const orderId = checkoutRes.body.data.order.id;
+    const orderItem = await prisma.orderItem.findFirst({ where: { orderId } });
+    if (!orderItem) throw new Error('orderItem not found');
+
+    const stockAfterCheckout = await prisma.stock.findUnique({
+      where: { productId_warehouseId: { productId: product.id, warehouseId: warehouse.id } },
+    });
+    expect(stockAfterCheckout?.quantity).toBe(8);
 
     const refundRes = await request(app)
       .post('/api/v1/sales/refunds')
       .set('Authorization', `Bearer ${adminJwt}`)
       .send({
+        // The body is a CreateRefundSchema: line items under `items`, reason from
+        // the RefundReason enum, and no top-level productId/amount/quantity —
+        // those are derived from the order item server-side so a client cannot
+        // refund more than was sold or at a price of its own choosing.
         orderId,
-        orderItemId: orderItem.id,
-        paymentId: payment.id,
-        productId: product.id,
-        amount: 20,
-        quantity: 2,
+        items: [{ orderItemId: orderItem.id, quantity: 2 }],
         reason: 'DEFECTIVE',
         restock: true,
       });
     expect(refundRes.status).toBe(201);
+    expect(refundRes.body.data.refundNumber).toMatch(/^REF-\d{6}-\d{5}$/);
+    expect(Number(refundRes.body.data.amount)).toBe(20);
+
+    const stockAfterRefund = await prisma.stock.findUnique({
+      where: { productId_warehouseId: { productId: product.id, warehouseId: warehouse.id } },
+    });
+    expect(stockAfterRefund?.quantity).toBe(10);
   });
 
   it('Atomic transaction failure: auditLog.create throws → no partial writes', async () => {

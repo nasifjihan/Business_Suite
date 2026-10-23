@@ -80,6 +80,7 @@ function calculateWeekdays(from: string | null, to: string | null): number {
 }
 
 const createLeaveSchema = z.object({
+  employeeId: z.string().min(1, "Employee is required"),
   leaveTypeId: z.string().min(1, "Leave type is required"),
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().min(1, "End date is required"),
@@ -138,6 +139,17 @@ function LeavesPageContent() {
       label: `${e.employeeCode} — ${e.firstName} ${e.lastName}`,
     })),
     [employees],
+  );
+
+  /**
+   * The employee a new request is filed for. Callers without hrm.leave.read_all
+   * can only ever file their own, so they are pinned to their linked record and
+   * are never offered somebody else's; admins default to themselves when they
+   * have an employee record of their own, and to the first employee otherwise.
+   */
+  const defaultEmployeeId = useMemo(
+    () => currentUserEmployeeId ?? (canReadAll ? employees[0]?.id ?? "" : ""),
+    [currentUserEmployeeId, canReadAll, employees],
   );
 
   const leaveTypeOptions = useMemo(
@@ -228,6 +240,7 @@ function LeavesPageContent() {
   const createForm = useForm<CreateLeaveFormValues>({
     resolver: zodResolver(createLeaveSchema),
     defaultValues: {
+      employeeId: "",
       leaveTypeId: "",
       startDate: "",
       endDate: "",
@@ -256,6 +269,7 @@ function LeavesPageContent() {
   useEffect(() => {
     if (modal.kind === "create") {
       createForm.reset({
+        employeeId: defaultEmployeeId,
         leaveTypeId: firstLeaveTypeId,
         startDate: "",
         endDate: "",
@@ -265,11 +279,12 @@ function LeavesPageContent() {
       rejectForm.reset({ rejectionNote: "" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modal.kind, modal.kind === "reject" ? "__reject__" : "__create__", firstLeaveTypeId]);
+  }, [modal.kind, modal.kind === "reject" ? "__reject__" : "__create__", firstLeaveTypeId, defaultEmployeeId]);
 
   const onSubmitCreate = async (v: CreateLeaveFormValues) => {
     const totalDays = calculateWeekdays(v.startDate, v.endDate);
     const payload = {
+      employeeId: v.employeeId,
       leaveTypeId: v.leaveTypeId,
       startDate: v.startDate,
       endDate: v.endDate,
@@ -600,6 +615,20 @@ function LeavesPageContent() {
           className="space-y-4"
           noValidate
         >
+          <GlobalSelect
+            label="Employee"
+            required
+            value={createForm.watch("employeeId")}
+            onChange={(v) => createForm.setValue("employeeId", v, { shouldValidate: true })}
+            options={
+              canReadAll
+                ? employeeOptions
+                : employeeOptions.filter((o) => o.value === currentUserEmployeeId)
+            }
+            disabled={!canReadAll || employeeOptions.length <= 1}
+            placeholder="Select employee…"
+            error={createForm.formState.errors.employeeId?.message}
+          />
           <GlobalSelect
             label="Leave Type"
             required

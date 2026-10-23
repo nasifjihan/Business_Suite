@@ -10,6 +10,7 @@ import {
   NotFoundError,
 } from "@/lib/errors";
 import { omitSensitive, writeAudit, extractMeta } from "@/middleware/audit";
+import { saveImage, deleteImageByUrl } from "@/lib/uploads";
 
 export type ListProductsResponse = Awaited<ReturnType<typeof ProductService["list"]>>;
 
@@ -46,6 +47,7 @@ export const ProductService = {
           barcode: true,
           unitPrice: true,
           status: true,
+          imageUrl: true,
           createdAt: true,
           category: { select: { id: true, name: true } },
           stockLevels: {
@@ -225,6 +227,45 @@ export const ProductService = {
     });
 
     return updated;
+  },
+
+  async uploadImage(id: string, buffer: Buffer, req: Request) {
+    const meta = extractMeta(req);
+
+    const before = await prisma.product.findUnique({ where: { id } });
+    if (!before) throw new NotFoundError("Product not found.");
+
+    // Write the file before the row so a bad image is rejected without a DB
+    // round-trip, and so the row never points at a file that does not exist.
+    const saved = await saveImage(buffer);
+
+    try {
+      const updated = await prisma.$transaction(async (tx) => {
+        const after = await tx.product.update({
+          where: { id },
+          data: { imageUrl: saved.url },
+        });
+        await writeAudit(tx, {
+          userId: req.user?.id,
+          action: AuditAction.UPDATE,
+          entityType: "Product",
+          entityId: after.id,
+          beforeData: omitSensitive(before),
+          afterData: omitSensitive(after),
+          ip: meta.ip,
+          ua: meta.ua,
+        });
+        return after;
+      });
+
+      // Committed — the previous image is now unreferenced. Best-effort.
+      await deleteImageByUrl(before.imageUrl);
+      return updated;
+    } catch (e) {
+      // The row still points at the old image, so this new file is garbage.
+      await deleteImageByUrl(saved.url);
+      throw e;
+    }
   },
 
   async remove(id: string, req: Request) {

@@ -226,6 +226,7 @@ export type StockItem = {
 export type ListStockArgs = {
   page?: number;
   pageSize?: number;
+  search?: string;
   productId?: string;
   warehouseId?: string;
   lowOnly?: boolean;
@@ -236,15 +237,20 @@ export type ListStockResponse = {
   meta: PaginationMeta;
 };
 
+/**
+ * Mirrors the Prisma `MovementType` enum exactly. It previously listed
+ * RECEIPT / ISSUE / ADJUSTMENT / RETURN / SALE / PURCHASE, none of which the
+ * API accepts, so every Stock In / Stock Out action failed Zod validation
+ * with a 422 before it reached the database.
+ */
 export type MovementType =
-  | "RECEIPT"
-  | "ISSUE"
+  | "IN"
+  | "OUT"
   | "TRANSFER_IN"
   | "TRANSFER_OUT"
-  | "ADJUSTMENT"
-  | "RETURN"
-  | "SALE"
-  | "PURCHASE";
+  | "ADJUST"
+  | "COUNT"
+  | "SCRAP";
 
 export type MovementItem = {
   id: string;
@@ -400,6 +406,26 @@ export const inventoryApi = apiSlice.injectEndpoints({
       query: (id) => ({ url: `/inventory/products/${id}`, method: "DELETE" }),
       invalidatesTags: ["Products", "Stock"],
     }),
+    /**
+     * Replaces a product's image. Multipart, not JSON — the body is a FormData
+     * so the browser sets the multipart boundary itself. Never set a
+     * Content-Type header here: doing so omits the boundary and the server
+     * rejects the request as malformed.
+     */
+    uploadProductImage: builder.mutation<
+      Envelope<ProductItem>,
+      { id: string; file: File }
+    >({
+      query: ({ id, file }) => {
+        const body = new FormData();
+        body.append("file", file);
+        return { url: `/inventory/products/${id}/image`, method: "POST", body };
+      },
+      invalidatesTags: (_, __, { id }) => [
+        "Products",
+        { type: "Products", id },
+      ],
+    }),
 
     listWarehouses: builder.query<
       Envelope<ListWarehousesResponse>,
@@ -507,6 +533,7 @@ export const {
   useCreateProductMutation,
   useUpdateProductMutation,
   useDeleteProductMutation,
+  useUploadProductImageMutation,
 
   useListWarehousesQuery,
   useGetWarehouseQuery,

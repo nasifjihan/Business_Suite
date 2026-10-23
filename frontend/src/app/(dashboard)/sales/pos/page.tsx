@@ -49,7 +49,6 @@ type CartLineItem = {
 const TAX_RATE_OPTIONS = [
   { value: "0", label: "0 %" },
   { value: "5", label: "5 %" },
-  { value: "7.5", label: "7.5 %" },
   { value: "10", label: "10 %" },
   { value: "20", label: "20 %" },
 ];
@@ -124,9 +123,11 @@ export default function PosPage() {
     [cartLines]
   );
   const discountAmount = round2(discount);
-  const afterDiscount = round2(Math.max(0, subtotal - discountAmount));
-  const taxAmount = round2((afterDiscount * taxRate) / 100);
-  const grandTotal = round2(afterDiscount + taxAmount);
+  // The API taxes each line and only then subtracts the header discount, so the
+  // preview mirrors that order; taxing the discounted figure would show the
+  // cashier a total the server never stores.
+  const taxAmount = round2((subtotal * taxRate) / 100);
+  const grandTotal = round2(subtotal - discountAmount + taxAmount);
 
   const addToCart = useCallback((product: ProductItem) => {
     setCart((prev) => {
@@ -292,23 +293,24 @@ export default function PosPage() {
     const paymentAmount =
       v.method === "CASH" ? Math.max(grandTotal, watchTendered) : grandTotal;
 
+    // The API recomputes every money figure from the catalogue — it only wants
+    // what it cannot derive: which product, how many, the per-line tax rate,
+    // the header discount and the tender. Sending our own unitPrice / subtotal
+    // / totalAmount would be rejected outright, since the checkout schema is
+    // strict about unknown keys.
     const body = {
       warehouseId: defaultWarehouseId,
       items: cartLines.map((l) => ({
         productId: l.product.id,
         quantity: l.quantity,
-        unitPrice: l.unitPrice,
-        warehouseId: defaultWarehouseId,
+        taxRatePercent: Math.round(taxRate),
       })),
-      discountAmount: discountAmount,
-      taxAmount,
-      subtotal,
-      totalAmount: grandTotal,
+      discountAmount,
       payments: [
         {
-          paymentMethod: v.method,
           amount: paymentAmount,
-          referenceNumber: (v.reference ?? undefined) as string | undefined,
+          method: v.method,
+          reference: (v.reference ?? undefined) as string | undefined,
           notes: (v.note ?? undefined) as string | undefined,
         },
       ],

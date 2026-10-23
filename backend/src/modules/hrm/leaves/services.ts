@@ -243,9 +243,25 @@ export const LeaveService = {
     const meta = extractMeta(req);
     const userId = req.user?.id;
 
+    // Who the leave is FOR is a server-side decision, never a trust-the-client
+    // one. A caller with hrm.leave.read_all may name any employee; everyone
+    // else may only ever file their own leave, and naming somebody else is a
+    // 403 rather than a silent rewrite so the client learns it was wrong.
+    let employeeId = dto.employeeId;
+    if (!canReadAll(req)) {
+      const selfEmployeeId = await resolveEmployeeIdForSelf(req);
+      if (employeeId && employeeId !== selfEmployeeId) {
+        throw new ForbiddenError("You can only submit leave requests for yourself.");
+      }
+      employeeId = selfEmployeeId;
+    }
+    if (!employeeId) {
+      throw new BadRequestError("Employee is required.");
+    }
+
     const created = await prisma.$transaction(async (tx) => {
       const employeeExists = await tx.employee.findUnique({
-        where: { id: dto.employeeId },
+        where: { id: employeeId },
         select: { id: true },
       });
       if (!employeeExists) throw new BadRequestError("Employee not found.");
@@ -266,7 +282,7 @@ export const LeaveService = {
         throw new BadRequestError("Start date cannot be after end date.");
       }
 
-      await checkOverlap(tx, dto.employeeId, startOnly, endOnly);
+      await checkOverlap(tx, employeeId, startOnly, endOnly);
 
       const totalDays = dto.halfDay ? 1 : countWeekdays(startOnly, endOnly);
       if (totalDays <= 0) {
@@ -275,7 +291,7 @@ export const LeaveService = {
 
       const leave = await tx.leaveRequest.create({
         data: {
-          employeeId: dto.employeeId,
+          employeeId,
           leaveTypeId: dto.leaveTypeId,
           startDate: startOnly,
           endDate: endOnly,
@@ -293,7 +309,7 @@ export const LeaveService = {
         entityType: "LeaveRequest",
         entityId: leave.id,
         afterData: omitSensitive(leave),
-        metadata: { employeeId: dto.employeeId, leaveTypeId: dto.leaveTypeId },
+        metadata: { employeeId, leaveTypeId: dto.leaveTypeId },
         ip: meta.ip,
         ua: meta.ua,
       });

@@ -137,6 +137,9 @@ function toErrorCode(status: number): string {
       return "CONFLICT";
     case StatusCodes.UNPROCESSABLE_ENTITY:
       return "VALIDATION_ERROR";
+    case StatusCodes.REQUEST_TOO_LONG:
+      // 413 — raised by the image upload size cap in lib/uploads.ts.
+      return "PAYLOAD_TOO_LARGE";
     case StatusCodes.TOO_MANY_REQUESTS:
       return "TOO_MANY_REQUESTS";
     default:

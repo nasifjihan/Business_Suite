@@ -259,8 +259,10 @@ export const hrmEndpoints = apiSlice.injectEndpoints({
         { type: "HRReports", id: "SUMMARY" },
       ],
     }),
+    // Approve / reject / cancel are PATCH on the API: they are partial updates
+    // of an existing leave request, not the creation of a new resource.
     approveLeave: builder.mutation<LeaveItem, { id: string; note?: string }>({
-      query: ({ id, note }) => ({ url: `${HRM_URL_PREFIX}/leaves/${id}/approve`, method: "POST", body: { note } }),
+      query: ({ id, note }) => ({ url: `${HRM_URL_PREFIX}/leaves/${id}/approve`, method: "PATCH", body: { note } }),
       invalidatesTags: (r, e, { id }) => [
         { type: "Leaves", id: "LIST" },
         { type: "Leaves", id },
@@ -271,8 +273,11 @@ export const hrmEndpoints = apiSlice.injectEndpoints({
     rejectLeave: builder.mutation<LeaveItem, { id: string; rejectionNote: string }>({
       query: ({ id, rejectionNote }) => ({
         url: `${HRM_URL_PREFIX}/leaves/${id}/reject`,
-        method: "POST",
-        body: { rejectionNote },
+        method: "PATCH",
+        // The API calls this field `rejectReason`; the UI label reads
+        // "Rejection Note", so the rename happens here rather than leaking the
+        // API's spelling into the form.
+        body: { rejectReason: rejectionNote },
       }),
       invalidatesTags: (r, e, { id }) => [
         { type: "Leaves", id: "LIST" },
@@ -281,7 +286,7 @@ export const hrmEndpoints = apiSlice.injectEndpoints({
       ],
     }),
     cancelLeave: builder.mutation<LeaveItem, string>({
-      query: (id) => ({ url: `${HRM_URL_PREFIX}/leaves/${id}/cancel`, method: "POST" }),
+      query: (id) => ({ url: `${HRM_URL_PREFIX}/leaves/${id}/cancel`, method: "PATCH" }),
       invalidatesTags: (r, e, id) => [
         { type: "Leaves", id: "LIST" },
         { type: "Leaves", id },

@@ -50,7 +50,7 @@ describe('Health Module', () => {
     expect(res.body.data.status).toBe('ok');
   });
 
-  it.skip('prisma SELECT 1 mocks failure → returns 503 service unavailable data.db disconnected', async () => {
+  it('prisma SELECT 1 mocks failure → returns 503 service unavailable data.db disconnected', async () => {
     const originalQueryRaw = prisma.$queryRawUnsafe;
     prisma.$queryRawUnsafe = (() => {
       throw new Error('DB connection failed');

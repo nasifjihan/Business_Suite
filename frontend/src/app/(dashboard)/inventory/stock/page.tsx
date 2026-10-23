@@ -49,9 +49,10 @@ const quickMovementSchema = z.object({
 });
 type QuickMovementFormValues = z.infer<typeof quickMovementSchema>;
 
+// The API's enum values are IN / OUT; the modal only ever records those two.
 const uiToApiMovementType: Record<UiMovementType, MovementType> = {
-  IN: "RECEIPT",
-  OUT: "ISSUE",
+  IN: "IN",
+  OUT: "OUT",
 };
 
 export default function StockListPage() {
@@ -78,6 +79,7 @@ export default function StockListPage() {
     {
       page: filters.page,
       pageSize: filters.pageSize,
+      search: filters.search,
       warehouseId: filters.warehouseId,
       lowOnly: filters.lowOnly,
     },

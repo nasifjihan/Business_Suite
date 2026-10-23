@@ -2,6 +2,7 @@ import { Router } from "express";
 import { authenticate } from "@/middleware/auth";
 import { authorize } from "@/middleware/authorize";
 import { validate } from "@/middleware/validate";
+import { uploadSingleImage } from "@/lib/uploads";
 import { ProductsController } from "./controllers";
 import {
   CreateProductSchema,
@@ -51,5 +52,19 @@ productsRouter
 productsRouter
   .route("/:id/stock-summary")
   .get(authorize("inventory.products.read"), ProductsController.stockSummary);
+
+// Reuses inventory.products.update rather than introducing a new permission
+// code: replacing a product's image IS a product update. Avoids touching the
+// 143-code RBAC matrix and the role grants that go with it.
+//
+// authorize() runs BEFORE multer on purpose — an unauthenticated or
+// unauthorised caller should be rejected before we buffer their bytes.
+productsRouter
+  .route("/:id/image")
+  .post(
+    authorize("inventory.products.update"),
+    uploadSingleImage("file"),
+    ProductsController.uploadImage,
+  );
 
 export { productsRouter };

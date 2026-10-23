@@ -45,16 +45,7 @@ import type {
 const extract = <T,>(resp?: { success: true; data: { items: T[]; meta: unknown } }) =>
   resp?.data ?? { items: [] as T[], meta: undefined };
 
-type UiMovementType =
-  | "IN"
-  | "OUT"
-  | "TRANSFER_IN"
-  | "TRANSFER_OUT"
-  | "ADJUST"
-  | "COUNT"
-  | "SCRAP";
-
-const MOVEMENT_TONE: Record<UiMovementType, StatusBadgeTone> = {
+const MOVEMENT_TONE: Record<MovementType, StatusBadgeTone> = {
   IN: "emerald",
   OUT: "rose",
   TRANSFER_IN: "sky",
@@ -64,7 +55,7 @@ const MOVEMENT_TONE: Record<UiMovementType, StatusBadgeTone> = {
   SCRAP: "rose",
 };
 
-const MOVEMENT_LABEL: Record<UiMovementType, string> = {
+const MOVEMENT_LABEL: Record<MovementType, string> = {
   IN: "Stock In",
   OUT: "Stock Out",
   TRANSFER_IN: "Transfer In",
@@ -74,26 +65,12 @@ const MOVEMENT_LABEL: Record<UiMovementType, string> = {
   SCRAP: "Scrap",
 };
 
-const uiToApi: Record<UiMovementType, MovementType> = {
-  IN: "RECEIPT",
-  OUT: "ISSUE",
-  TRANSFER_IN: "TRANSFER_IN",
-  TRANSFER_OUT: "TRANSFER_OUT",
-  ADJUST: "ADJUSTMENT",
-  COUNT: "ADJUSTMENT",
-  SCRAP: "ISSUE",
-};
-
-const apiToUi: Record<string, UiMovementType> = {
-  RECEIPT: "IN",
-  ISSUE: "OUT",
-  TRANSFER_IN: "TRANSFER_IN",
-  TRANSFER_OUT: "TRANSFER_OUT",
-  ADJUSTMENT: "ADJUST",
-  RETURN: "IN",
-  SALE: "OUT",
-  PURCHASE: "IN",
-};
+/** Same split the API uses in stockMovements/services.ts. */
+const POSITIVE_MOVEMENT_TYPES: ReadonlySet<MovementType> = new Set([
+  "IN",
+  "TRANSFER_IN",
+  "COUNT",
+]);
 
 const movementFilterOptions = [
   { value: "", label: "All types" },
@@ -145,10 +122,8 @@ export default function MovementsLedgerPage() {
     const page = parseInt(searchParams?.get("page") ?? "1", 10) || 1;
     const pageSize = parseInt(searchParams?.get("pageSize") ?? "25", 10) || 25;
     const mt = searchParams?.get("movementType");
-    let apiMovementType: MovementType | undefined;
-    if (mt && mt in uiToApi) {
-      apiMovementType = uiToApi[mt as UiMovementType];
-    }
+    const apiMovementType =
+      mt && mt in MOVEMENT_LABEL ? (mt as MovementType) : undefined;
     return {
       page,
       pageSize,
@@ -301,7 +276,7 @@ export default function MovementsLedgerPage() {
 
   const onSubmitCreate = async (v: MovementFormValues) => {
     const out = await createTrigger({
-      movementType: uiToApi[v.movementType],
+      movementType: v.movementType,
       productId: v.productId,
       warehouseId: v.warehouseId,
       quantity: v.quantity,
@@ -327,12 +302,8 @@ export default function MovementsLedgerPage() {
     }
   };
 
-  const resolveUiType = (m: MovementItem): UiMovementType => {
-    return apiToUi[m.movementType] ?? "ADJUST";
-  };
-
-  const isPositiveType = (uiType: UiMovementType): boolean =>
-    uiType === "IN" || uiType === "TRANSFER_IN" || uiType === "COUNT" || uiType === "ADJUST";
+  const isPositiveType = (type: MovementType): boolean =>
+    POSITIVE_MOVEMENT_TYPES.has(type);
 
   const columns: ColumnDef<TableFeatures, MovementItem, any>[] = useMemo(() => {
     const col = createColumns<MovementItem>();
@@ -342,12 +313,11 @@ export default function MovementsLedgerPage() {
         id: "movementType",
         header: "Type",
         cell: ({ row: { original: m } }) => {
-          const uiType = resolveUiType(m);
           return (
             <StatusBadge
-              tone={MOVEMENT_TONE[uiType]}
+              tone={MOVEMENT_TONE[m.movementType]}
               size="md"
-              label={MOVEMENT_LABEL[uiType]}
+              label={MOVEMENT_LABEL[m.movementType]}
             />
           );
         },
@@ -381,8 +351,7 @@ export default function MovementsLedgerPage() {
         id: "quantity",
         header: "Quantity",
         cell: ({ row: { original: m } }) => {
-          const uiType = resolveUiType(m);
-          const positive = isPositiveType(uiType);
+          const positive = isPositiveType(m.movementType);
           const sign = positive ? "+" : "-";
           return (
             <span
@@ -461,7 +430,6 @@ export default function MovementsLedgerPage() {
   }, []);
 
   const currentViewMovement = modal.kind === "view" ? modal.movement : null;
-  const viewUiType = currentViewMovement ? resolveUiType(currentViewMovement) : null;
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -798,13 +766,13 @@ export default function MovementsLedgerPage() {
           </div>
         }
       >
-        {currentViewMovement && viewUiType && (
+        {currentViewMovement && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center gap-3">
               <StatusBadge
-                tone={MOVEMENT_TONE[viewUiType]}
+                tone={MOVEMENT_TONE[currentViewMovement.movementType]}
                 size="lg"
-                label={MOVEMENT_LABEL[viewUiType]}
+                label={MOVEMENT_LABEL[currentViewMovement.movementType]}
               />
               <DateDisplay
                 date={currentViewMovement.createdAt}
@@ -844,12 +812,12 @@ export default function MovementsLedgerPage() {
                 <p
                   className={cn(
                     "text-lg font-bold tabular-nums",
-                    isPositiveType(viewUiType)
+                    isPositiveType(currentViewMovement.movementType)
                       ? "text-emerald-600 dark:text-emerald-400"
                       : "text-rose-600 dark:text-rose-400"
                   )}
                 >
-                  {isPositiveType(viewUiType) ? "+" : "-"}
+                  {isPositiveType(currentViewMovement.movementType) ? "+" : "-"}
                   {currentViewMovement.quantity}
                 </p>
               </div>

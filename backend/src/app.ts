@@ -6,10 +6,11 @@
  *   3. compression (gzip JSON)
  *   4. express.json ({ limit: '10mb' }) — parse JSON bodies
  *   5. cookieParser
- *   6. standardLimiter (global rate limit)
- *   7. /api/v1 routes
- *   8. notFoundHandler (any URL not matched above)
- *   9. errorHandler (CATCH ALL, LAST — never move this)
+ *   6. uploaded product images (static — ahead of the limiter, see below)
+ *   7. standardLimiter (global rate limit)
+ *   8. /api/v1 routes
+ *   9. notFoundHandler (any URL not matched above)
+ *  10. errorHandler (CATCH ALL, LAST — never move this)
  *
  * NOTE: there is deliberately no global audit-log middleware. A global one
  * cannot capture the "before" snapshot a PATCH needs, so audit rows are written
@@ -81,18 +82,40 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
 
-  // 5. Global rate limiting
+  // 5. Uploaded product images.
+  //
+  // Mounted ABOVE standardLimiter deliberately. That limiter allows 100
+  // requests / 15 min, and a single product grid with 24 thumbnails would eat a
+  // quarter of the budget just by rendering — so serving these before it keeps
+  // the budget for the API calls that actually need throttling.
+  //
+  // Served by Express rather than nginx so the same relative URL resolves in
+  // dev (:5000), Docker and production. nginx already forwards /api/ here, so
+  // this needs no location block of its own.
+  app.use(
+    CONFIG.uploads.publicPath,
+    express.static(CONFIG.uploads.dir, {
+      // Filenames are UUIDs and content never changes for a given name, so a
+      // long immutable cache is safe.
+      immutable: true,
+      maxAge: "365d",
+      index: false,
+      dotfiles: "ignore",
+    }),
+  );
+
+  // 6. Global rate limiting
   app.use(standardLimiter);
 
   app.use("/health", healthRouter);
 
-  // 6. API routes
+  // 7. API routes
   app.use("/api/v1", apiV1Router);
 
-  // 7. 404
+  // 8. 404
   app.use(notFoundHandler);
 
-  // 8. ★ ABSOLUTELY LAST: centralized error handler ★
+  // 9. ★ ABSOLUTELY LAST: centralized error handler ★
   app.use(errorHandler);
 
   return app;

@@ -60,6 +60,11 @@ export default defineConfig({
     // imports have already constructed the Prisma client.
     env: {
       DATABASE_URL: resolveTestDatabaseUrl(),
+      // Keeps uploaded test images out of the development uploads/ directory,
+      // where they would linger and be indistinguishable from real user files.
+      // Must be here for the same reason as DATABASE_URL: UPLOAD_DIR is
+      // resolved to an absolute path once, when config/env.ts is first imported.
+      UPLOAD_DIR: 'uploads-test',
     },
     setupFiles: ['./src/tests/setup.ts'],
     coverage: {

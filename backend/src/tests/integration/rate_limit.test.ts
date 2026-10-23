@@ -42,32 +42,44 @@ describe('Rate Limiting & Security (Integration)', () => {
     expect(first429).toBeLessThanOrEqual(12);
   });
 
-  it.skip('2100 GET /api/v1/inventory/products with admin JWT → 2001st returns 429 (slow)', async () => {
-    let got429 = false;
-    for (let i = 0; i < 2100; i++) {
-      const res = await request(app)
-        .get('/api/v1/inventory/products?pageSize=1')
-        .set('Authorization', `Bearer ${adminJwt}`);
-      if (res.status === 429) {
-        got429 = true;
-        expect(i).toBeGreaterThanOrEqual(1999);
-        break;
-      }
-    }
-    expect(got429).toBe(true);
-  }, 120000);
+  it('Global limiter: from a fresh app, request 101 of 110 returns 429', async () => {
+    // This used to run against the shared `app` above and assert the 429 landed
+    // near index 100 — which it never could, because the login test above has
+    // already spent part of the same 100-request budget (the store is keyed by
+    // IP, and every supertest call comes from loopback). It also carried a
+    // "2100 requests → 429 at 2001" sibling that has been deleted: it assumed
+    // authedLimiter (max 2000) guards authenticated routes, but that limiter is
+    // exported from middleware/rateLimiter.ts and never mounted anywhere, so the
+    // app-wide 100 is the only ceiling that applies here.
+    vi.resetModules();
+    const { createApp: createFreshApp } = await import('../../app.js');
+    const freshApp = createFreshApp();
 
-  it.skip('110 anon GET /api/v1/crm/customers → 101st returns 429 (slow)', async () => {
-    let got429 = false;
+    // The suite's afterEach wipes the database, but this file seeds only once in
+    // beforeAll — so the admin from beforeAll is long gone by now, and
+    // authenticate() looks the user up on every request (it wants a fresh
+    // status and the role's permissions from the DB, not the JWT's claims).
+    // Re-seed and mint a token for the new id.
+    const freshSeed = await seedBaseline(prisma);
+    const jwt = createTestJwt(freshSeed.admin.id, ['crm.customers.read'], 'ADMIN');
+
+    let first429 = -1;
+    let firstStatus = 0;
     for (let i = 0; i < 110; i++) {
-      const res = await request(app).get('/api/v1/crm/customers?pageSize=1');
+      const res = await request(freshApp)
+        .get('/api/v1/crm/customers?pageSize=1')
+        .set('Authorization', `Bearer ${jwt}`);
+      if (i === 0) firstStatus = res.status;
       if (res.status === 429) {
-        got429 = true;
-        expect(i).toBeGreaterThanOrEqual(99);
+        first429 = i;
         break;
       }
     }
-    expect(got429).toBe(true);
+
+    // The first call must genuinely succeed, otherwise a 401/403 misread as the
+    // limiter would make this pass for the wrong reason.
+    expect(firstStatus).toBe(200);
+    expect(first429).toBe(100);
   }, 60000);
 
   it('Wrong Origin header → access-control-allow-origin is NOT wildcard *', async () => {
