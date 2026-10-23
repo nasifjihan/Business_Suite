@@ -61,6 +61,34 @@ const rawBaseQuery = fetchBaseQuery({
 // SHARED singleton mutex across BOTH middleware and helper.
 const mutex = new Mutex();
 
+/**
+ * Endpoints that START or END a session rather than relying on one.
+ *
+ * A 401 from any of these means "the credentials you just sent are wrong", not
+ * "your session expired" — so the refresh-and-logout path must not run for
+ * them. Without this list, a mistyped password on POST /auth/login produced a
+ * 401, which was fed to refreshInternal; refresh had no cookie to spend, so it
+ * called hardLogout and the user landed on /login?expired=1 with an
+ * "inactivity" notice instead of "Invalid email or password".
+ *
+ * /auth/change-password is deliberately NOT listed: it needs a live session and
+ * answers a wrong current password with 422, so a 401 there really does mean
+ * the access token expired.
+ */
+const CREDENTIAL_ENDPOINTS = [
+  "/auth/login",
+  "/auth/2fa/verify",
+  "/auth/refresh",
+  "/auth/logout",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+];
+
+function isCredentialEndpoint(args: string | FetchArgs): boolean {
+  const url = typeof args === "string" ? args : args.url;
+  return CREDENTIAL_ENDPOINTS.some((path) => url.startsWith(path));
+}
+
 function enrichUser(raw: Record<string, unknown> | AuthUser): AuthUser {
   const u = raw as AuthUser & { firstName?: string; lastName?: string; fullName?: string };
   if (!u.fullName) {
@@ -180,6 +208,9 @@ export const baseQueryWithReauth: BaseQueryFn<
   await mutex.waitForUnlock();
   const result = await rawBaseQuery(args, api, extraOptions);
   if (result.error?.status !== 401) {
+    return result;
+  }
+  if (isCredentialEndpoint(args)) {
     return result;
   }
   const refreshed = await refreshInternal(api, extraOptions);
