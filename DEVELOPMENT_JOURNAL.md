@@ -149,8 +149,8 @@ Seeded `bs_db` and confirmed the seed matches the README's claims:
 |---|---|---|
 | User | 1 | "creates **one** user" ✅ |
 | Role | 7 | "All seven roles" ✅ |
-| Permission | 143 | "143 permission codes" ✅ |
-| RolePermission | 554 | — |
+| Permission | 143 → **151** | "143 permission codes" — drifted, see Phase 6c |
+| RolePermission | 554 → **590** | — |
 | Product | 1 (demo fixture) | — |
 
 ### Baseline re-run — all gates green
@@ -636,4 +636,332 @@ repo has no trace.
 
 Left for Phase 7: the README env table needs `UPLOAD_DIR` / `UPLOAD_MAX_BYTES`
 and the `uploads` volume.
+
+---
+
+## 2026-10-23 — Phase 6: end-to-end tests
+
+Phase 11 in the original build specified Playwright and never wrote it. The plan
+called for three specs against the running stack; the specs took an afternoon
+and then found **four production bugs that no unit test could have caught**.
+That is the section worth reading (6c).
+
+### 6a — repairing the unit suite before adding a layer on top
+
+Phase 0 left 7 skipped tests. Skipped tests cannot be left in place while a new
+test layer is added on top of them: the suite reports green either way, so the
+skips become permanent.
+
+| Test | Action | Why |
+|---|---|---|
+| `auth`: register with existing email → 409 | **deleted** | `POST /auth/register` does not exist and never did — `auth/routes.ts` exposes login, `/2fa/*`, refresh, logout, forgot/reset-password, me and change-password. Accounts are admin-provisioned through the users module. |
+| `auth`: register valid user → 201 | **deleted** | Same phantom endpoint. |
+| `auth`: strict limiter 429 after 10 logins | **deleted, moved** | It cannot live in `auth.test.ts`. `const app = createApp()` there runs at *import* time, before any test can set a flag, so the limiters are already constructed. The assertion now lives in `rate_limit.test.ts`, which sets `__FORCE_RATE_LIMIT_TEST__` and only then imports `createApp` — `setup.ts`'s `express-rate-limit` mock neuters every limiter to `max: 9_999_999` unless that flag is set. |
+| `rate_limit`: 2100 requests → 429 at 2001 | **deleted** | It assumed `authedLimiter` (max 2000) guards authenticated routes. `authedLimiter` is exported from `middleware/rateLimiter.ts` and **mounted nowhere** — only `standardLimiter` and `authStrictLimiter` are. The premise was false, so the test could never pass. |
+| `rate_limit`: 110 requests → 429 | **repaired** | Ran against the shared `app`, so the login test above had already spent part of the same 100-request budget (the store is keyed by IP and every supertest call is loopback). Now builds a *fresh* app, and asserts request 1 is genuinely `200` before asserting the 429 lands at index 100 — otherwise a 401 misread as the limiter would pass for the wrong reason. |
+| `health`: prisma failure → 503 | **un-skipped** | Restores `$queryRawUnsafe` in a `finally`; works against the real handler. |
+| `sales_checkout`: refund valid order → 201 | **un-skipped** | Body corrected to `CreateRefundSchema` (line items under `items`, `reason` from the enum) — the old shape asserted a client-chosen price, which the service deliberately ignores. |
+
+Net: **81 tests (74 pass + 7 skip) → 77 pass, 0 skip.** Four removed
+(2 phantom, 2 built on false premises), three repaired and re-enabled.
+
+### 6b — the `playwright/` package
+
+A root `playwright/` package, not a folder inside `frontend/`, so the browser
+binaries and test deps stay out of both production images.
+
+| File | Purpose |
+|---|---|
+| `playwright/package.json` | `test:e2e`, `:headed`, `:ui`, `:report` |
+| `playwright/playwright.config.ts` | `baseURL` nginx on `:80`, **no `webServer`** — the suite runs against the Docker stack |
+| `playwright/specs/helpers.ts` | `loginViaUi`, `readAccessToken`, `apiFor`, `runId` |
+| `playwright/specs/auth-crm-flow.spec.ts` | login → create customer → it appears in the list |
+| `playwright/specs/pos-inventory-flow.spec.ts` | create product → stock in via the ledger → sell at POS → stock drops |
+| `playwright/specs/hrm-leave-flow.spec.ts` | file a leave request → approve it → status changes |
+
+Two deliberate choices in `helpers.ts`:
+
+- **`readAccessToken()` goes through `POST /auth/refresh`, not the login
+  response.** The access token lives only in Redux memory, so it cannot be read
+  back out of storage; and `refresh` is deliberately outside `authStrictLimiter`,
+  so minting a token for `afterAll` cleanup costs no login budget. Each spec
+  logs in exactly **once**, through the real UI.
+- **Locators avoid `data-testid` entirely** — there are none in this codebase.
+  They use `id`, labels, placeholders, roles and visible text, which is also
+  why `exact: true` appears so often: `getByRole(name)` and `getByText(str)` are
+  case-insensitive *substring* matches, so `"Customers"` also matches the empty
+  state's "No customers found".
+
+`--retries=0` locally, not `--retries=1`. `process.env.CI` is truthy inside this
+sandbox shell, so the config would otherwise retry, and each retry re-runs a
+login against a 10-per-15-minute budget.
+
+### 6c — the four production bugs
+
+The first honest run against the Docker stack failed. All four causes were real
+defects in the application, not test-only problems.
+
+**1. The POS sold inventory without ever reducing it.** (the worst one)
+
+The spec stocked 10 units in, sold 1, and expected 9. It got **10**. A direct
+`psql` probe showed the order row had `warehouseId` **NULL** and the only
+`StockMovement` row was the manual `IN`.
+
+Root cause was three layers down: `ListWarehousesSchema.isActive` was a raw
+`z.boolean().optional()`. Express hands every query value over as a **string**,
+so `?isActive=true` failed validation with **422** — meaning
+`useListWarehousesQuery({ pageSize: 100, isActive: true })` always returned
+nothing, so the POS's `defaultWarehouseId` was `undefined`. `checkout()` guards
+its *entire* stock block behind `if (dto.warehouseId)`, and the validator accepts
+a missing `warehouseId` because it is `.optional()` — so the order was created,
+the money was taken, and no stock moved. Silent, and invisible until an E2E test
+compared two numbers.
+
+The sweep for siblings found three more, plus a latent bug:
+
+| Validator | Was | Now |
+|---|---|---|
+| `inventory/warehouses` `isActive` | `z.boolean().optional()` | `booleanQuery.optional()` |
+| `inventory/stock` `lowOnly` | `z.coerce.boolean()` | `booleanQuery.optional()` |
+| `sales/credits` `withPositiveBalance` | `z.coerce.boolean()` | `booleanQuery.optional()` |
+| `sales/refunds` `restock` | `z.coerce.boolean()` | `booleanQuery.optional()` |
+| `hrm/employees` `isActive` | `z.boolean()` | `booleanQuery.optional()` |
+| `hrm/departments` `isActive` | `z.boolean()` | `booleanQuery.optional()` |
+| `hrm/designations` `isActive` | `z.boolean()` | `booleanQuery.optional()` |
+
+Fixed with one new primitive, `backend/src/utils/query.ts`:
+
+```ts
+export const booleanQuery = z
+  .union([z.boolean(), z.enum(["true", "false"])])
+  .transform((v) => v === true || v === "true");
+```
+
+The second half of that union is the part that matters. `z.coerce.boolean()` is
+`Boolean(value)`, and `Boolean("false") === true` — so `?lowOnly=false` on
+`/inventory/stock` behaved **exactly** like `?lowOnly=true`, silently. Both
+mistakes are the same mistake: treating a query string as if it were a typed
+value.
+
+**2. Every HRM page rendered empty while the API returned rows.**
+
+All 30 HRM hooks in `frontend/src/lib/api/hrmEndpoints.ts` declared their return
+type as the *unwrapped* payload (`{ items, meta }`, `EmployeeItem`) while every
+HRM controller answers through `successResponse` — which is
+`{ success, data, message }`. So `res?.items` was always `undefined`. The leave
+table, the attendance table, the departments/designations/employees tables and
+the HR overview counters (`headcount`, `todayByStatus`, `upcomingAnniversaries`)
+were all reading past the envelope and rendering zeros and empty states over
+data that was arriving correctly.
+
+Fixed with a single `transformResponse: unwrap` applied to all 30 endpoints —
+one line of introspection, rather than each of a dozen pages digging into
+`res.data.data`.
+
+**3. The app-wide rate limiter locked real users out.**
+
+Running the three specs back-to-back, the second and third failed — the UI
+navigated to `/login?expired=1` and could not get back in. Cause:
+`standardLimiter` is mounted on `/api/v1` at **100 requests per 15 minutes per
+IP, counting every call including authenticated ones**. Three specs driving the
+real UI exhaust that; once it trips, every request 429s and the frontend's
+refresh interceptor bounces the user to the login page.
+
+This is a product defect, not a test artefact: a normal user clicking around for
+a few minutes hits it too. `RATE_LIMIT_MAX` is now overridable
+(`${RATE_LIMIT_MAX:-100}`), so the suite runs with a raised ceiling while the
+**production default stays 100**. `DISABLE_RATE_LIMIT` was deliberately left at
+`false` — raising the ceiling is the honest fix; switching the limiter off would
+mean CI never exercises it. The real brute-force shield, `authStrictLimiter`
+(10/15 min), was not touched.
+
+### 6d — CI
+
+`.github/workflows/e2e-ci.yml`. Separate from `backend-ci.yml` /
+`frontend-ci.yml` on purpose: those run against a bare Postgres service and the
+source tree in a couple of minutes; this one builds two production images first.
+Together, a red unit test would hide behind a ten-minute Docker build.
+
+It reproduces the local conditions rather than approximating them:
+
+1. `docker compose up -d --wait postgres`, then `npm ci` + `prisma migrate
+   deploy` **from the host** — the backend image runs `migrate deploy` in its
+   CMD, but that happens after boot, and the seeds need the tables to exist
+   first.
+2. `npm run seed` **with the demo fixtures**. `seed_demo_phase7_pos.ts` is what
+   creates the "Main Warehouse" the POS page auto-selects; `--no-demo` would
+   leave the list empty and reproduce bug #1 exactly. `NODE_ENV` is therefore
+   left unset (seed.ts skips demo fixtures when it is `production`).
+3. `docker compose up -d --build --wait --wait-timeout 900` — waiting on all
+   four healthchecks, not just `/health`, so the frontend and nginx are proven
+   too.
+4. `npx playwright install --with-deps chromium` + `npx playwright test`.
+5. On failure: `docker compose logs --tail=300` and the Playwright report as an
+   artefact. Deployment failures that only show up inside a container are the
+   exact class this project has already been bitten by, so the logs are
+   collected automatically rather than left for a second run.
+
+### Problems hit
+
+**1. `psql` and quoted identifiers, again.** `-c "select … \"isActive\" …"`
+through PowerShell produced `unterminated quoted identifier`. The working form
+is the stop-parsing operator:
+`psql -U postgres -d bs_db -t -c --% "select count(*) from \"Permission\";"`.
+Same family as the earlier lesson: PowerShell rewrites the argument before the
+database ever sees it.
+
+**2. `localhost` vs `127.0.0.1`, in the opposite direction this time.** Phase 0
+found the *backend* cannot reach `localhost:5433` (Docker's loopback forward is
+IPv4-only, Node prefers `::1`). The browser is the mirror image: the UI must be
+loaded from `http://localhost`, because `NEXT_PUBLIC_API_URL=http://localhost/api/v1`
+is baked into the bundle at build time and the CORS allowlist is
+`FRONTEND_URL=http://localhost:3000`. Loading `127.0.0.1` in Playwright gives
+same-origin failures that look like API bugs.
+
+### Gate
+
+> all three specs pass twice in a row against the Docker stack.
+
+```
+Running 3 tests using 1 worker
+  3 passed (14.3s)
+```
+```
+Running 3 tests using 1 worker
+  3 passed (13.5s)
+```
+
+Two clean back-to-back runs, which is what the gate is actually testing —
+isolation, not a lucky first run. Each spec creates its own rows under a
+`runId()` suffix and deletes them in `afterAll` through the API, so a run cannot
+pass on leftovers from the previous one.
+
+The HRM spec is a partial exception, and it says so out loud. `DELETE
+/hrm/leaves/:id` only accepts PENDING/CANCELLED/REJECTED rows, so the run that
+approves its own request cannot delete it afterwards — `afterAll` gets a 400 and
+warns. It stays isolated anyway because `pickFreeWeekday()` walks forward from
++30 days to the first weekday the employee has no PENDING or APPROVED leave on, so
+each run claims a fresh date rather than reusing one. The visible cost is that
+approved E2E rows accumulate in a long-lived dev database.
+
+### Result
+
+| Suite | Before Phase 6 | After |
+|---|---|---|
+| backend `npm test` | 74 passed, 7 skipped (81) | **77 passed, 0 skipped** (12 files, 91s) |
+| backend `tsc --noEmit` | 0 errors | 0 errors |
+| frontend `tsc --noEmit` | 0 errors | 0 errors |
+| Playwright | *(did not exist)* | **3 specs, green twice** |
+
+The permission catalog moved from 143 codes / 554 grants to **151 / 590**: the
+endpoint audit in 6c found the CRM module defending itself with
+`crm.customers.*` / `crm.leads.*` codes that no seed ever created, so `ADMIN` and
+`SALES` held no rights to the module their sidebar linked to. The README's
+"143 permission codes" claim is corrected in Phase 7.
+
+---
+
+## 2026-10-23 — Phase 7: documentation reconciliation
+
+### Why this phase exists
+
+Documentation drifted while the code was moving. The failure mode this phase
+targets is specific and was named in the plan before any doc was touched:
+
+> **Gate:** no doc claims a file or feature that does not exist.
+
+### What was wrong
+
+Eight documents, and the drift was not cosmetic — several claims pointed at code
+that had been deleted or renamed:
+
+| Claim found in docs | Reality |
+|---|---|
+| `requirePermission()` middleware | The middleware is `authorize()`. `requirePermission` appears **only** in prose — never in `backend/src` |
+| `rbac.ts` middleware file | Deleted in Phase 1 |
+| `auditLogger.ts` "runs after the response" | Deleted in Phase 1; the real path is `writeAudit(tx, …)` inside a service `$transaction` |
+| `utils/permissions.ts → hasPermission()` with `*.*` wildcard matching | No such helper. `authorize.ts` matches **exact strings** and carries an unmatched defensive `"*"` short-circuit |
+| "6 System Roles" | Seven |
+| `ValidationError`, `AuthenticationError`, `AuthorizationError`, `BusinessRuleError` | `UnprocessableEntityError`, `UnauthorizedError`, `ForbiddenError` — there is no `BusinessRuleError` |
+| `nginx/` folder in the tree | A single `nginx.conf` at the repo root, bind-mounted |
+| Playwright "trending/not implemented" | `playwright/` exists with three passing specs |
+| "All 6 roles covered" by `npm run seed` | One user is seeded |
+
+### The verification that mattered
+
+Two claims could not be settled by reading code, because they were about
+*seeded data*. Rather than guess, the live database was queried:
+
+```
+SUPER_ADMIN | 151      SALES   | 65
+ADMIN       | 146      HR      | 49
+MANAGER     | 110      VIEWER  | 37
+CASHIER     |  32
+```
+
+(1 + 1 + 1 + 1 + 39 + 151 + 146 = 590, matching the `RolePermission` count.) Only
+SUPER_ADMIN holds every code — and it holds them **explicitly**, which is why the
+`*.*` story in `rbac.md` was wrong in a way that would have misled a reader about
+how the system actually authorises.
+
+### Documents changed
+
+| Document | Change |
+|---|---|
+| `docs/rbac.md` | 7 roles; the `*.*` narrative replaced with the real model; `requirePermission` → `authorize`; §3 rewritten against `checkRule()`; verified per-role grant counts added; audit section corrected to describe `writeAudit` |
+| `docs/architecture.md` | `Next.js 15` → 16; `authorize()` in the lifecycle; error-class list corrected; `Next.js 16` in the system diagram |
+| `docs/database.md` | Seed rule 4 corrected (one user, not six) |
+| `docs/api.md` | §11 auth flows (2-step login, `/auth/2fa/*`, forgot-password) and §12 upload added; envelope, error `details`, pagination-`perPage` and CSP sections corrected |
+| `docs/learning-notes.md` | Four V2 entries, titled `(V2)` so they do not collide with the original-build phases of the same number; the `"*"` matcher described accurately |
+| `BUILD_PROCESS.md` | Folder tree fixed (`nginx/` removed, `playwright/` given its real `specs/` layout, `PLAN.md` + `DEVELOPMENT_JOURNAL.md` + `.github/` added); new **§25** documents V2 Phases 1–6 and the four production bugs; the `requirePermission`/`rbac.ts`/`auditLogger.ts`/`*.*` claims corrected; test counts annotated as historical rather than silently rewritten |
+| `README.md` | E2E row rewritten to Playwright; 2FA, SMTP and uploads described; Playwright, env-var and uploads-volume sections added |
+| `PLAN.md` | Status header and the Phase 6/7 rows updated |
+
+### Decision — annotate history, do not rewrite it
+
+`BUILD_PROCESS.md` records what each phase did *at the time*. Its Phase 11 section
+says "48 passed, 0 failed" and its Phase 14 section repeats a similar figure.
+Those numbers are now wrong, but they were true when written, and rewriting them
+would make the log lie about its own history. Instead the stale figures are
+**annotated in place** with what the current counts are and where they changed:
+
+> `# (Historical — this phase's first run: ~45 of 52 pass; 7 skip were optional endpoints not exposed.`
+> `#  V2 Phase 6 repaired/re-enabled those: current suite is 77 passed / 0 skipped across 12 files.)`
+
+The one exception is a claim about the *present* — "NO Playwright/Cypress" — which
+was never a historical statement, so it was corrected outright and cross-linked to
+§25.
+
+### Problems hit
+
+1. **The spec document was left alone, deliberately.** `Business_Suite_Full_Technical_Project_Specification.md`
+   lists the same error-class names that were never implemented. It is the
+   original V1 *requirements* document — a record of what was asked for, not a
+   claim about what exists — so correcting it would misrepresent it as a build
+   log. It stays as-is.
+2. **`docs/rbac.md` §2's matrix omits SUPER_ADMIN** because a column of solid ✅
+   adds no information. That is fine, but it needed a one-line note or a reader
+   would reasonably ask why a "7 roles" document printed six columns. The note was
+   added.
+3. **The docs disagreed about which HTTP status a validation failure returns.**
+   `api.md` and `architecture.md` now both state 422 via
+   `UnprocessableEntityError` with a `{ field, message }[]` `details` array.
+
+### Gate
+
+> no doc claims a file or feature that does not exist.
+
+Met: every file referenced in the reconciled docs was confirmed to exist
+(`playwright/specs/*`, `lib/mailer.ts`, `lib/uploads.ts`, `utils/totp.ts`,
+`utils/crypto.ts`, `components/auth/TwoFactorCard.tsx`,
+`components/form/ImageUploadField.tsx`, `middleware/authorize.ts`,
+`middleware/audit.ts`), and every endpoint documented in `docs/api.md` was checked
+against its route.
+
+### Result
+
+Eight documents reconciled, no code changed. `BUILD_PROCESS.md` gained a §25 that
+ties the V2 work to the four production bugs it exposed, and `PLAN.md` now shows
+Phases 0–7 done with only the final verification left.
+
 

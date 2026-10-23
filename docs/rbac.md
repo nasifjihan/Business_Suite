@@ -1,6 +1,6 @@
 # RBAC (Role-Based Access Control) — Business Suite
 
-> 6 System Roles × ~100 Permission Codes. Enforced by `requirePermission()` middleware on the BACKEND.
+> 7 System Roles × 151 Permission Codes. Enforced by `authorize()` middleware on the BACKEND.
 
 ---
 
@@ -13,15 +13,36 @@ A string in the format `{module}.{action}`. Examples:
 - `roles.delete` — Can delete custom roles
 - `dashboard.read` — Can view the dashboard page + call dashboard APIs
 
-Wildcards for ADMIN role:
-- `products.*` — Matches `products.read`, `products.create`, `products.update`, `products.delete`
-- `*.*` — Matches EVERYTHING. Only the ADMIN role has this. Assigned via code to the ADMIN row in seed.
+### Are there wildcards?
+**No — permission codes are matched by exact string equality.** There is no
+`products.*` or `*.*` code in the database. SUPER_ADMIN simply holds *all 151
+codes* explicitly (`seed_phase3_rbac.ts` assigns it the full `ALL_CODES` array),
+which is why it can do everything.
+
+`authorize()` does carry one defensive escape hatch — `if (userCodes.includes("*")) return next()`
+— but **no role is granted `"*"`**, so nothing currently triggers it. It exists as
+defence-in-depth if a future role ever needs a literal bypass.
 
 ### What is a "Role"?
-A named set of permissions. 6 SYSTEM roles (`isSystem = true`) are non-deletable. Admins can create custom roles (e.g. "Senior Sales + Inventory reader") by picking any subset of permission codes.
+A named set of permissions. 7 SYSTEM roles (`isSystem = true`) are non-deletable. Admins can create custom roles (e.g. "Senior Sales + Inventory reader") by picking any subset of permission codes.
 
 ### Who assigns roles to users?
-ADMIN only. Edit User modal → Role dropdown. Roles are stored as `users.roleId → roles.id` FK.
+Users with `users.update` (ADMIN in practice). Edit User modal → Role dropdown. Roles are stored as `users.roleId → roles.id` FK.
+
+### Verified grant counts (live database)
+| Role | Codes granted |
+|---|---|
+| SUPER_ADMIN | 151 (all) |
+| ADMIN | 146 |
+| MANAGER | 110 |
+| SALES | 65 |
+| HR | 49 |
+| VIEWER | 37 |
+| CASHIER | 32 |
+
+590 `RolePermission` rows in total. `authenticate()` re-reads the user's
+permissions from the DB on **every request**, so grant changes take effect
+immediately — no re-login required.
 
 ---
 
@@ -29,10 +50,12 @@ ADMIN only. Edit User modal → Role dropdown. Roles are stored as `users.roleId
 
 ✅ = **GRANTED** · ❌ = **DENIED**
 
-> Hint: In an interview, say "ADMIN gets wildcard `*.*`. Every other role gets a curated list. RBAC middleware matches `module.action` against user's permission codes with wildcard support."
+> Hint: In an interview, say "SUPER_ADMIN is granted all 151 codes explicitly; other roles get curated lists. `authorize()` matches `module.action` codes by exact string equality — no wildcard codes exist in the DB."
 
 ### Legend of columns
 A = ADMIN, M = MANAGER, S = SALES, C = CASHIER, H = HR, V = VIEWER
+
+> SUPER_ADMIN is omitted from the matrix: it holds **all 151 codes**, so every row is ✅.
 
 | # | Module / Permission Code | Description | A | M | S | C | H | V |
 |---|---------------------------|-------------|---|---|---|---|---|---|
@@ -114,32 +137,50 @@ A = ADMIN, M = MANAGER, S = SALES, C = CASHIER, H = HR, V = VIEWER
 
 ## 3. Permission Matching Algorithm (Backend)
 
-File: `backend/src/utils/permissions.ts` → `hasPermission(userPermissions: string[], required: string): boolean`
+File: `backend/src/middleware/authorize.ts` → `authorize(...required)` + `checkRule(rule, codes)`
 
-Used by `requirePermission()` middleware:
+Used by every protected route:
 
 ```typescript
-// Given: userPermissions = ['products.*', 'customers.read']
-// Required: 'products.create' → match
-// Required: 'products.delete' → match
-// Required: 'customers.update' → NO match
-// Required: 'users.read' → NO match
-// ADMIN ALWAYS has ['*.*'] in their permission list so everything matches
+router.get('/users', authenticate(), authorize('users.read'), UsersController.list)
+
+// A rule can also be a matcher — see the AND/OR note below:
+router.patch('/roles/:id', authenticate(), authorize('roles.update'), RolesController.update)
 ```
 
-Algorithm (simple loop, short-circuits):
-```
-FOR each userPerm IN userPermissions:
-   IF userPerm === required                          → RETURN true
-   IF userPerm === '*.*'                              → RETURN true (ADMIN)
-   Split userPerm on '.' → [uMod, uAct]
-   Split required on '.' → [rMod, rAct]
-   IF uMod === rMod AND (uAct === '*' OR uAct === rAct) → RETURN true
-END
-RETURN false
+```typescript
+type PermissionMatcher =
+  | string                // exact code: "users.read"
+  | { all: string[] }     // require ALL of these codes (AND)
+  | { any: string[] };    // require at least one (OR)
+
+export function authorize(...required: (string | PermissionMatcher)[]) {
+  return function authorizeMiddleware(req, _res, next) {
+    const userCodes: string[] = req.permissionCodes ?? [];
+    // Defensive escape hatch — no role is granted "*", so this never fires today.
+    if (userCodes.includes("*")) return next();
+    const ok = required.every((rule) => checkRule(rule, userCodes));
+    if (!ok) throw new ForbiddenError("Forbidden — you do not have sufficient permissions to perform this action.");
+    return next();
+  };
+}
+
+function checkRule(rule: string | PermissionMatcher, codes: string[]): boolean {
+  if (typeof rule === "string") return codes.includes(rule);
+  if ("all" in rule) return rule.all.every((c) => codes.includes(c));
+  if ("any" in rule) return rule.any.some((c) => codes.includes(c));
+  return false;
+}
 ```
 
-No regex. No libs. 6 lines of TS. Fast, auditable, testable.
+Notes:
+- Each argument to `authorize()` must be satisfied (`Array.every`), but a single
+  `{ any: [...] }` matcher inside it passes on the first hit. A bare list of
+  string args therefore behaves as **AND**, and `{ any: [...] }` gives you **OR**.
+- `req.permissionCodes` is attached by `authenticate()`, which loads the user and
+  their role's codes fresh from the DB on every request — so a revoked grant takes
+  effect on the very next call.
+- No regex. No permission library. Exact string matching against a `string[]`.
 
 ---
 
@@ -159,7 +200,7 @@ Also drives the sidebar: Sidebar component maps nav items to required permission
 >
 > Example interviewer question: "What if I open Chrome DevTools, find the user-management route handler, and manually make a DELETE /users/:id request with my cashier's JWT?"
 >
-> Correct answer: "The cashier JWT is valid (so `authenticate()` passes and 401 is not the response). But the next middleware is `requirePermission('users.delete')` which checks the cashier's permission list. The cashier doesn't have it, so middleware calls `next(new AuthorizationError(...))` and Express returns 403 Forbidden. The DB row is never touched. We also have tests in rbac.test.ts that exercise exactly this case to prevent regressions."
+> Correct answer: "The cashier JWT is valid (so `authenticate()` passes and 401 is not the response). But the next middleware is `authorize('users.delete')` which checks the cashier's permission list. The cashier doesn't have it, so middleware throws `ForbiddenError` and Express returns 403 Forbidden. The DB row is never touched. We also have tests in rbac.test.ts that exercise exactly this case to prevent regressions."
 
 ---
 
@@ -173,7 +214,7 @@ If we add a new feature — say, "Product Bulk Import" (Phase V2):
    - Run `npx prisma db seed` again (or manually INSERT the row if seed can't be re-run).
 
 2. **Step 2 — Backend route middleware**
-   - Add to the POST import route: `router.post('/import', authenticate(), requirePermission('products.import'), validate(importSchema), controller.import)`
+   - Add to the POST import route: `router.post('/import', authenticate(), authorize('products.import'), validate(importSchema), controller.import)`
 
 3. **Step 3 — Frontend Gate**
    - Wrap the button: `<PermissionGate permission="products.import"> <Button>Import CSV</Button> </PermissionGate>`
@@ -192,5 +233,5 @@ Explicitly NO for the permission middleware itself. Checking permissions on ever
 
 *What we DO log:*
 - **Auth events**: LOGIN, LOGIN_FAILED, LOGOUT, REFRESH, REVOKE (in audit_logs as action enum).
-- **Data mutating events**: Every POST / PATCH / DELETE successful response writes 1 audit_logs row with entityType, entityId, beforeData (JSON), afterData (JSON), userId, ipAddress, userAgent — done via `auditLogger` middleware that runs AFTER the successful response.
-- **DENIED permission attempts**: Every `next(new AuthorizationError(...))` in middleware writes a WARN-level server log (stdout/stderr via logger), but NOT to the DB audit table. In production you'd ship stdout to a log aggregator (Sentry / Datadog) and alert on bursts of 403s to detect compromised accounts probing for endpoints.
+- **Data mutating events**: Every POST / PATCH / DELETE writes 1 `AuditLog` row with entityType, entityId, beforeData (JSON), afterData (JSON), userId, ipAddress, userAgent — done by `writeAudit(tx, …)` called **inside the service-layer Prisma `$transaction`**, so the audit row commits or rolls back atomically with the data change it describes. (See `backend/src/middleware/audit.ts`.)
+- **DENIED permission attempts**: A failed `authorize()` throws `ForbiddenError`, which the central `errorHandler()` maps to 403 and logs at WARN level (stdout/stderr) — **not** to the `AuditLog` table. In production you'd ship stdout to a log aggregator (Sentry / Datadog) and alert on bursts of 403s to detect compromised accounts probing for endpoints.

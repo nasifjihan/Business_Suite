@@ -10,7 +10,7 @@
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ BROWSER (User's Device)                                                  │
 │ ┌────────────────────────────────────────────────────────────────────┐   │
-│ │ Next.js 15 App (Frontend) — REACT 19 + TS 5                       │   │
+│ │ Next.js 16 App (Frontend) — REACT 19 + TS 5                       │   │
 │ │  ├─ Public pages: home, features, pricing, contact                │   │
 │ │  ├─ Auth pages: login, forgot-password                            │   │
 │ │  ├─ Dashboard shell (Sidebar + Navbar) + module pages             │   │
@@ -38,7 +38,7 @@
 │    6. express-rate-limit        ← Per-IP rate limit (100/15min)        │
 │    7. ROUTER  →  /api/v1/*                                            │
 │       ├─ authenticate()         ← Verify JWT; attach req.user         │
-│       ├─ requirePermission()    ← RBAC: check req.permissions        │
+│       ├─ authorize()            ← RBAC: check req.permissionCodes     │
 │       ├─ validate(ZodSchema)    ← Parse req.body/query/params         │
 │       ├─ Controller (thin)      ← Extract params → call Service       │
 │       ├─ Service (fat)          ← BUSINESS LOGIC lives here          │
@@ -111,17 +111,17 @@ RTK Query (productsApiSlice)
    ▼
 Express → middleware stack (cors/helmet/compression/JSON/rateLimit)
    ▼
-products/routes.ts → router.get('/', authenticate(), requirePermission('products.read'), ...)
+products/routes.ts → router.get('/', authenticate(), authorize('products.read'), ...)
    │
    ├─ authenticate():
    │   ├── Extracts JWT from Authorization header
    │   ├── Verifies signature (JWT_ACCESS_SECRET), expiry
    │   ├── SELECT user + role + role_permissions + permission codes
-   │   └── Attaches req.user = { id, email, roleId, permissions: ['products.read', ...] }
+   │   └── Attaches req.user = { id, email, roleId } and req.permissionCodes = ['products.read', ...]
    │
-   ├─ requirePermission('products.read'):
-   │   └── Checks 'products.read' is in req.user.permissions
-   │       If not → next(new AuthorizationError('Missing permission...'))
+   ├─ authorize('products.read'):
+   │   └── Checks 'products.read' is in req.permissionCodes (exact match)
+   │       If not → throws ForbiddenError('Missing permission...') → 403
    │
    ▼
 product controller → const { page, pageSize, sortBy, sortOrder, search } = parsePaginationParams(req.query)
@@ -175,13 +175,18 @@ Browser renders → user sees product list page loaded
 All errors thrown by Service/Controller are **typed classes** from `backend/src/lib/errors.ts`:
 
 ```typescript
-throw new ValidationError('Email is required');               // 422
-throw new AuthenticationError('Invalid email or password');    // 401
-throw new AuthorizationError('Missing permission: roles.delete'); // 403
-throw new NotFoundError(`Product ${id} not found`);            // 404
-throw new ConflictError(`SKU "${sku}" already exists`);        // 409
-throw new BusinessRuleError('Insufficient stock for product X'); // 422 (or 409 depending on context)
+throw new BadRequestError('Email is required');                 // 400
+throw new UnauthorizedError('Invalid email or password');        // 401
+throw new ForbiddenError('Missing permission: roles.delete');    // 403
+throw new NotFoundError(`Product ${id} not found`);             // 404
+throw new ConflictError(`SKU "${sku}" already exists`);         // 409
+throw new UnprocessableEntityError('Insufficient stock', issues); // 422
+throw new TooManyRequestsError();                                // 429
 ```
+
+(All subclass `AppError` in `backend/src/lib/errors.ts`. Validation failures
+raised by the `validate()` middleware use `UnprocessableEntityError` with a
+`details` array of `{ field, message }`.)
 
 The `errorHandler` middleware in the LAST position catches them all and maps to:
 
@@ -191,7 +196,7 @@ The `errorHandler` middleware in the LAST position catches them all and maps to:
   "error": {
     "code": "INSUFFICIENT_STOCK",
     "message": "Insufficient stock for product 'Premium Widget'. Available: 4. Requested: 10.",
-    "details": [ { "path": ["items","2","qty"], "expected": "≤ 4" } ] // ValidationErrors only
+    "details": [ { "path": ["items","2","qty"], "expected": "≤ 4" } ] // validation-issue details only
   }
 }
 ```
@@ -289,3 +294,154 @@ Why is frontend separated from database at all? Why not tools like PostgREST or 
 | POS checkout (atomic tx) | < 500ms local DB / < 1.5s remote | Row-level locks are held briefly. No N+1 inside the tx. |
 | Bundle size (login route gzipped) | < 150 KB gzipped | ECharts lazy loaded, not in main bundle. |
 | Bundle size (dashboard route) | ECharts + data = 600-900 KB gzipped | Acceptable tradeoff; only loaded for logged-in users navigating to dashboard. |
+
+---
+
+## 10. Request Lifecycle: Two-Step Login (2FA)
+
+One endpoint, two response shapes — and which one you get is decided by the
+account, never by the client.
+
+**Step 1 — `POST /api/v1/auth/login`:**
+
+```
+Browser (LoginForm)
+   │  POST /api/v1/auth/login   { email, password }
+   ▼
+nginx  /api/ ─► backend:4000     (one origin — no CORS preflight)
+   ▼
+authStrictLimiter (10 req / 15 min / IP)   ← the brute-force shield
+   ▼
+validate({ body: LoginSchema })
+   ▼
+AuthService.login()
+   ├─ findUnique(email) + verifyPassword()   ← bcrypt compare even when no user exists
+   │     wrong email OR wrong password → 401 "Invalid email or password."  (one message)
+   ├─ status !== ACTIVE → 403
+   │
+   ├─ twoFactorEnabled === false
+   │     issueSession() → refresh-token family row (jti + familyId, token hashed)
+   │     → 200 { success, data: { accessToken, user, permissions } }
+   │       Set-Cookie: refreshToken   (HTTP-only, 7d, rotating)
+   │
+   └─ twoFactorEnabled === true
+         signTwoFactorChallenge({ sub, jti })
+         → 200 { success, data: { twoFactorRequired: true, challengeToken } }
+           NO Set-Cookie, NO access token — the challenge is the whole response
+```
+
+**Step 2 — `POST /api/v1/auth/2fa/verify`:**
+
+```
+Browser (code prompt, shown because step 1 set twoFactorRequired)
+   │  POST /api/v1/auth/2fa/verify   { challengeToken, code }
+   ▼
+authStrictLimiter → validate({ body: TwoFactorVerifySchema })
+   ▼
+AuthService.verifyTwoFactorLogin()
+   ├─ verifyTwoFactorChallenge(token)  ← the `type` claim must be "2fa_challenge"
+   ├─ decryptSecret(twoFactorSecret)   ← AES-256-GCM; hashing would make verification impossible
+   ├─ verifyTotpCode(secret, code)     ← or ONE single-use recovery code, consumed atomically
+   └─ issueSession(user)               ← the SAME helper step 1 uses
+   ▼
+200 { success, data: { accessToken, user, permissions } }
+   + Set-Cookie: refreshToken          ← set here, never at step 1
+```
+
+**Why `200 + challengeToken`, not `401`.** The alternative — answer `401` and let
+the frontend read it as "2FA required" — was rejected because `401` is *already*
+the wrong-password answer above. A client that only looks at the status code
+could not tell "your password is wrong" from "your password is right, now enter
+a code": the same code carrying opposite meaning. A distinct `200` body with
+`twoFactorRequired: true` keeps the two states separable without inventing a
+status code no proxy understands.
+
+**The challenge token is not a Bearer token.** It is signed with the same
+`accessSecret` as a real access token, so signature verification alone cannot
+tell them apart. What separates them is the `type` claim — `2fa_challenge`
+versus `access` — and each verifier rejects the other's literal. Without that
+field the challenge would have been a fully valid Bearer token for its 5-minute
+lifetime, silently bypassing 2FA entirely. A test asserts `GET /auth/me` answers
+`401` for a challenge token.
+
+**The password is checked before the 2FA branch.** The challenge is only ever
+handed to a caller who already proved the password, so "2FA required" is not an
+account-enumeration oracle.
+
+**The access token lives in memory only.** The response body carries
+`accessToken`; the UI holds it in the Redux `auth` slice and never persists it.
+The refresh cookie is the only durable credential. On a page reload there is no
+access token to find, so the app performs one mutex-locked `POST /auth/refresh`
+(the reauth flow in §7) before the first authenticated call fires — the mutex
+exists because several dashboard widgets can hit `401` at once, and N parallel
+refreshes would trip the backend's reuse detection and log the user out.
+
+---
+
+## 11. Request Lifecycle: Product Image Upload
+
+`Product.imageUrl` stores a **relative** path, and the upload rides the existing
+`/api/` proxy rule — it needs no nginx change and no new permission code.
+
+```
+Browser (ImageUploadField, in a product EDIT form — an upload needs a product id)
+   │  POST /api/v1/inventory/products/:id/image   multipart/form-data, field "file"
+   ▼
+nginx  /api/ ─► backend:4000     (no new location block: uploads share this rule)
+   ▼
+express.static("/api/v1/uploads", UPLOAD_DIR)   ← registered ABOVE the rate limiter
+   ▼
+standardLimiter (100 req / 15 min, app-wide)
+   ▼
+/api/v1 router → productsRouter
+   ├─ authenticate()                         ← 401 if token missing/invalid
+   ├─ authorize("inventory.products.update") ← 403 BEFORE a single byte is buffered
+   ├─ uploadSingleImage("file")              ← multer memoryStorage, 2 MB cap
+   │     LIMIT_FILE_SIZE → 413 (StatusCodes.REQUEST_TOO_LONG) AppError
+   └─ ProductsController.uploadImage
+   ▼
+ProductService.uploadImage()
+   ├─ read the current row (the audit's "before" snapshot)
+   ├─ saveImage(buffer)
+   │     detectImageType(bytes)   ← magic bytes pick .png / .jpg / .webp
+   │     write `${randomUUID()}<ext>` into UPLOAD_DIR   ← FILE WRITTEN BEFORE THE ROW
+   ▼
+   prisma.$transaction(tx => {
+       tx.product.update({ where: { id }, data: { imageUrl } })   ← the row
+       writeAudit(tx, { before, after })                          ← audit in the SAME tx
+   })
+   │  commit
+   ▼
+   deleteImageByUrl(before.imageUrl)   ← best-effort, AFTER commit only
+   ▼
+200 { success, data: { imageUrl: "/api/v1/uploads/<uuid>.png" } }
+   ▼
+Browser stores the RELATIVE path; <img src={resolveAssetUrl(path)} />
+   → prefix the API origin parsed from NEXT_PUBLIC_API_URL
+   → same-origin (nginx) case: NEXT_PUBLIC_API_URL is relative, so the stored path is returned unchanged
+```
+
+**Why the path is stored relative.** `imageUrl` holds `/api/v1/uploads/<uuid>.png`,
+never an absolute URL, so one database row stays correct in dev (`:5000`), behind
+nginx, and in production. The cost lands on the browser — a relative `<img src>`
+would resolve against the UI's own origin (`:3000` in dev) and 404 — which is what
+`resolveAssetUrl()` exists to pay, once, on the client.
+
+**Why `authorize()` runs before `multer`.** The middleware order in
+`productsRouter` is `authorize → uploadSingleImage → controller`, so an
+unauthenticated or unauthorised caller is rejected before their bytes are
+buffered. `memoryStorage` (not `diskStorage`) means a rejected upload — wrong
+type, oversize, failed transaction — leaves nothing on disk to clean up.
+
+**Why the file is written before the row.** A rejected image therefore never
+leaves a row pointing at a file that does not exist. If the transaction fails,
+the just-written file is deleted and the row still points at the old image. The
+**previous** file is deleted only after commit, and best-effort: at that point
+nothing references it, and a failed unlink must not turn a successful upload
+into a 500.
+
+**Why the static mount sits above the rate limiter.** `standardLimiter` allows
+100 requests / 15 min. A product grid rendering 24 thumbnails would spend a
+quarter of that budget just drawing itself, pushing normal use into `429`s. The
+static mount is registered before the limiter so image traffic does not compete
+with the API calls the limiter exists to protect.

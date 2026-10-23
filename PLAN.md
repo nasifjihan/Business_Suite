@@ -1,6 +1,6 @@
 # Business Suite — Completion Plan (V2)
 
-> **Status:** In progress — Phases 0–5 complete
+> **Status:** In progress — Phases 0–7 complete, Phase 8 remaining
 > **Created:** 2026-10-23
 > **Predecessor:** Phases 0–14 (see [BUILD_PROCESS.md](BUILD_PROCESS.md))
 > **Log:** [DEVELOPMENT_JOURNAL.md](DEVELOPMENT_JOURNAL.md)
@@ -29,8 +29,8 @@ code it describes has stopped moving.
 | 3 | Email delivery — real SMTP for password reset | Feature | ✅ Done |
 | 4 | Two-factor authentication (TOTP) | Feature | ✅ Done |
 | 5 | Product image upload | Feature | ✅ Done |
-| 6 | Playwright end-to-end suite | Test | ☐ (+ 7 skipped tests to resolve) |
-| 7 | Documentation reconciliation | Docs | ☐ (4 more corrections found) |
+| 6 | Playwright end-to-end suite | Test | ✅ Done — 3 specs, 4 prod bugs fixed, CI job added |
+| 7 | Documentation reconciliation | Docs | ✅ Done |
 | 8 | Final end-to-end verification | Gate | ☐ |
 
 **Explicitly out of scope for this plan** (unchanged V1 non-goals):
@@ -288,22 +288,23 @@ isolation, not just a lucky first run).
 
 ---
 
-## Phase 7 — Documentation reconciliation
+## Phase 7 — Documentation reconciliation ✅ COMPLETE
 
 Docs land **last**, after the code stops moving.
 
 | Document | Change |
 |---|---|
-| `BUILD_PROCESS.md` | Fix the folder tree: `nginx/` does not exist (it is a root `nginx.conf` bind-mount); `playwright/` now does. Add sections for Phases 3–6 above. |
-| `README.md` | Rewrite the E2E row (currently "_Not implemented._"); add new env vars, the uploads volume, and the new features. |
-| `docs/api.md` | Document 2FA, upload and mail endpoints. |
-| `docs/database.md` | Document the new `User` and `Product` columns. |
-| `docs/architecture.md` | Request lifecycle for the 2-step login and the upload path. |
-| `docs/learning-notes.md` | One entry per phase above, in the existing format. |
+| `BUILD_PROCESS.md` | Folder tree fixed (`nginx/` → root `nginx.conf` bind-mount; `playwright/` added; `PLAN.md`/`DEVELOPMENT_JOURNAL.md`/`.github/` added); new §25 documents V2 Phases 3–6; `requirePermission`/`*.*`/`rbac.ts`/`auditLogger.ts` claims corrected; test counts annotated. |
+| `README.md` | E2E row rewritten to Playwright; 2FA + SMTP + uploads described; env-var, uploads-volume and Playwright sections added. |
+| `docs/api.md` | 2FA, upload and mail endpoints documented; envelope/validation-error/pagination sections corrected. |
+| `docs/database.md` | New `User` and `Product` columns; ERD, enum count and seed rules corrected. |
+| `docs/architecture.md` | 2-step login and upload lifecycles added; `Next.js 16`; `authorize()` replaces `requirePermission()`; error classes corrected. |
+| `docs/learning-notes.md` | One entry per V2 phase, titled `(V2)` to avoid clashing with the original-build phases of the same number. |
+| `docs/rbac.md` | 7 roles (was 6); the `*.*` wildcard story replaced with the real model (SUPER_ADMIN holds all 151 codes explicitly; `authorize.ts` has an unmatched defensive `*` short-circuit); verified per-role grant counts added. |
 | `DEVELOPMENT_JOURNAL.md` | Maintained throughout, not written at the end. |
 
 **Gate:** no doc claims a file or feature that does not exist — the specific
-failure this phase is fixing.
+failure this phase is fixing. ✅ Met.
 
 ---
 

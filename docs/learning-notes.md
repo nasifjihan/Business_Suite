@@ -139,7 +139,7 @@ The auth API endpoints exist (POST /forgot-password, POST /reset-password) but w
 3. **Service-layer writeAudit, NOT global Express middleware.** Auditing was originally sketched in BUILD_PROCESS template as "global Express audit middleware (after every POST/PATCH/DELETE)". This approach has 2 insurmountable problems: (a) global middleware runs AFTER controller returns to client (or before, can't get beforeData snapshot without pre-reading EVERY endpoint), (b) global middleware doesn't have access to the Prisma $transaction context (business write + audit log must commit ATOMICALLY or we have phantom audits / missing audits on rollback). Service-layer (each service method explicitly calls `writeAudit(tx, …)` inside its own $transaction) wins because: (a) beforeData snapshot = the value the service just read out of DB before modifying (100% accurate), (b) beforeData + afterData + business write commit as ONE atomic Prisma transaction, (c) writeAudit wrapped in try/catch so even if audit write fails (schema mismatch, etc.), the BUSINESS write still succeeds (audit is nice-to-have not mission-critical). Grep-ability bonus: search codebase for "writeAudit(" gives you EXACTLY the list of endpoints that write audit entries (impossible with global middleware).
 4. **System role immutability enforced in service layer (not routes, not middleware, not frontend).** Roles SUPER_ADMIN & ADMIN are seeded `isSystem=true`. Protection guard is implemented in `roles/services` in BOTH `update()` and `remove()` methods: throw BadRequestError("Cannot rename/delete a system role") when trying to change isSystem role names. Why service-layer guard is the right place not routes: (a) if someone adds a NEW future route (bulk-rename roles, import roles from CSV), they don't accidentally bypass the route-level authorize middleware and forget system-role protection — service layer always catches. (b) future backend scripts (ts-node that import roles.service directly) still hit the guard, not just HTTP requests. (c) it's the canonical source of truth. Frontend adds readonly UX polish (name field disabled when isSystem), backend service layer = hard enforcement.
 5. **Permission assignment uses deleteMany+createMany inside $transaction instead of diff-based add/remove.** The naive approach for role permission editing is: old set = {A,B,C}, new set = {B,C,D} → compute adds (D), removes (A) → prisma.rolePermission.deleteMany(A) + createMany(D). At scale 62 perms we instead do: `await tx.rolePermission.deleteMany({ where: { roleId } })` followed immediately by `await tx.rolePermission.createMany(roleId × newPermIds)`. Both approaches produce identical DB final state. Benefits of delete+recreate over diff: (a) diffing code has subtle bugs when sets contain duplicates or when permission codes are changed externally mid-request; delete+recreate is trivial and idempotent. (b) no need to hold entire previous set in memory for comparison. (c) fewer lines of code = fewer bugs. Trade-off: 62 row deletes + 62 row inserts = negligible Postgres write cost (1ms max, roles admin is rare operation). This pattern works great for <1000 items in many-to-many join tables.
-6. **Authorize middleware is a VARIADIC factory with 4 matchers, not a single-string function.** Signature: `authorize(...required: (string | { any?: string[]; all?: string[] })[])`. Matchers: (a) single exact `"users.create"` → needs that exact permission. (b) `{ any: ["users.read", "roles.read"] }` → needs AT LEAST ONE (OR gate). (c) `{ all: ["leads.read", "customers.read"] }` → needs EVERY ONE (AND gate). (d) wildcard `"*"` backend-only escape hatch (SUPER_ADMIN gets all). Why this shape? We anticipated future cross-module permission gates: Phase 8 HRM "can approve leave" needs `hrm.leave.approve` (exact string), Phase 5 CRM dashboard widget needs "at least one of customers.read or leads.read" (any gate), inventory stock transfer needs "products.read AND warehouses.read" (all gate). One variadic factory covers all future gates without writing new middleware through Phase 12. Without this we'd have 4 separate middleware functions (requirePermission, requireAnyPermission, requireAllPermissions, requireAdminWildcard) which multiplied across 60 routes = confusion.
+6. **Authorize middleware is a VARIADIC factory with 4 matchers, not a single-string function.** Signature: `authorize(...required: (string | { any?: string[]; all?: string[] })[])`. Matchers: (a) single exact `"users.create"` → needs that exact permission. (b) `{ any: ["users.read", "roles.read"] }` → needs AT LEAST ONE (OR gate). (c) `{ all: ["leads.read", "customers.read"] }` → needs EVERY ONE (AND gate). (d) a defensive `"*"` string short-circuit that bypasses all checks — **no role is granted `"*"` today**; SUPER_ADMIN instead holds all 151 codes explicitly, so it passes every gate by exact match. Why this shape? We anticipated future cross-module permission gates: Phase 8 HRM "can approve leave" needs `hrm.leave.approve` (exact string), Phase 5 CRM dashboard widget needs "at least one of customers.read or leads.read" (any gate), inventory stock transfer needs "products.read AND warehouses.read" (all gate). One variadic factory covers all future gates without writing new middleware through Phase 12. Without this we'd have 4 separate middleware functions (requirePermission, requireAnyPermission, requireAllPermissions, requireAdminWildcard) which multiplied across 60 routes = confusion.
 7. **Zod pagination coerce + ParsedQs bridge cast pattern.** PaginationSchema uses `page: z.coerce.number().int().min(1).default(1)`. Why zod coerce? HTTP query params come in as strings (`req.query.page = "1"`, not number 1). Zod `.coerce.number()` automatically parses the string to int inside the safeParse call — no manual `parseInt(req.query.page as string)` boilerplate across 12 list endpoints. Controllers still need the bridge cast `const q = req.query as unknown as ListUsersQuery` before passing to services because Express `ParsedQs` (what req.query is typed as) isn't structurally compatible with zod-inferred strict types (ParsedQs allows `string | string[] | ParsedQs | ParsedQs[]`, our zod types are specific `string | number | undefined`). The double cast is ugly but explicit, no runtime impact because zod safeParse validates shape anyway inside service.
 
 ### Interview takeaways:
@@ -149,7 +149,7 @@ The auth API endpoints exist (POST /forgot-password, POST /reset-password) but w
 4. *"Explain Prisma 7 InputJsonValue vs JsonValue. Why did you use them?"* → **Split Json types answer.** JsonValue = READ TYPE (what SELECT returns — narrow, no Prisma.DbNull). InputJsonValue = WRITE/CREATE TYPE (wider, accepts Prisma.Null/Prisma.DbNull/Prisma.JsonNull sentinel values). Gotcha: `import type { Prisma }` is WRONG when using InputJsonValue because type-only import strips the Prisma namespace that holds these — value import `import { Prisma }` required.
 5. *"Why does role permission editing use deleteMany+createMany instead of computing diff add/remove sets?"* → **Simplicity > perf at 62-item scale.** Identical final DB state. Diff bugs: duplicates in arrays, mid-request external permission changes, null vs undefined handling. Delete+create: trivial, idempotent, no bugs. 62 deletes + 62 inserts = ~1ms Postgres write (role admin is rare operation). Be clear you'd switch to diffing if join table rows > 10000 or update was high-frequency.
 6. *"Why is role update/delete guard in service layer not route middleware?"* → **Defense in depth + single source of truth.** Guard in service layer: automatically protects HTTP routes, future bulk-import scripts written in ts-node that import service directly, future GraphQL resolvers, etc. Routes/middleware/frontends can forget — service NEVER forgets. Match to earlier learning about backend-only boundaries (same pattern: enforce at the business logic canonical layer, not at transport or UI).
-7. *"What's the authorize middleware matcher pattern? Why not just requirePermission(string)?"* → Walk through 4 matchers: (a) exact string "users.create", (b) {any:[]} OR, (c) {all:[]} AND, (d) "*" SUPER_ADMIN wildcard. Why this shape? Covers every future permission gate we need through Phase 12 HRM cross-module gates without writing new middleware. Examples: Approve leave in HRM = `authorize("hrm.leave.approve")`. Sales dashboard = `authorize({ any: ["crm.customers.read","sales.orders.read"] })`. Stock transfer = `authorize({ all: ["inventory.products.read","inventory.warehouses.read"] })`.
+7. *"What's the authorize middleware matcher pattern? Why not just requirePermission(string)?"* → Walk through the matchers: (a) exact string "users.create", (b) {any:[]} OR, (c) {all:[]} AND, (d) a defensive "*" short-circuit (unused — SUPER_ADMIN holds all 151 codes explicitly). Why this shape? Covers every future permission gate we need through Phase 12 HRM cross-module gates without writing new middleware. Examples: Approve leave in HRM = `authorize("hrm.leave.approve")`. Sales dashboard = `authorize({ any: ["crm.customers.read","sales.orders.read"] })`. Stock transfer = `authorize({ all: ["inventory.products.read","inventory.warehouses.read"] })`.
 
 ---
 
@@ -845,4 +845,355 @@ raising `testTimeout` was the right fix. If it had been shared state — a leake
 module singleton, an unreset database, a global set by another file — a longer timeout
 would only have hidden it. The one unacceptable option is leaving it flaky: a suite
 that goes red at random trains everyone to ignore red.
+
+---
+
+## Phase 3 (V2) — Email Delivery (real SMTP)
+
+`forgotPassword` already had the user lookup, the hashed reset token, the 15-minute
+expiry and the enumeration-safe contract that always answers `{ ok: true }`. Only
+*delivery* was fake — it `console.log`ed the reset link. So this phase is deliberately
+narrow: add a transport, add a template, call them, and change nothing else.
+`MAIL_ENABLED=false` had to stay byte-for-byte identical, because every existing auth
+test exercises that path.
+
+### Mistakes during implementation:
+
+1. **Almost shaped the wiring as `if (CONFIG.mail.enabled) { await sendMail(...) }`.**
+   Externally that is identical while mail is off, but it silently drops the one case
+   that matters: SMTP is *up* and *rejecting*. The reset link would have been thrown away
+   inside the endpoint. The chosen shape — call `sendMail()` unconditionally and treat its
+   boolean as "delivered?" — collapses three outcomes (disabled, misconfigured, failed)
+   into a single `if (!delivered)`, keeps the "is mail on?" decision in one place, and lets
+   the integration test assert "the mailer was asked to send to the right address" without
+   mutating a frozen `CONFIG.mail` object to switch mail on.
+2. **(Predicted & Avoided) Letting `sendMail` throw.** A rejected SMTP connection is the
+   obvious place to surface an error — and it would have been an enumeration oracle. The
+   endpoint's entire contract is `{ ok: true }` for every input, including addresses that do
+   not exist. A 500 from a dead SMTP host makes `{ ok: false }` appear *only* for real
+   accounts, which is exactly the leak the contract exists to close. `sendMail` mirrors
+   `writeAudit()`: catch, `console.error`, return `false`.
+3. **Nearly called the phase done on mocks alone.** Unit tests prove the template renders
+   and the fallback fires; they cannot prove the transport options are right (host/port,
+   `secure`, no-auth). The gate only means something if a real message leaves the process.
+
+### Key decisions:
+
+1. **Nodemailer over a vendor SDK (Resend/SendGrid/SES).** Plain SMTP is what every one of
+   those providers, plus Mailtrap/Mailpit and a bare local MTA, exposes. One dependency
+   instead of a provider-specific client means switching provider is an env-var change, not
+   a code change — and the provider never becomes a compile-time dependency of an
+   open-source core.
+2. **`sendMail()` returns a boolean and never throws.** The caller's fallback becomes a
+   single rule (`if (!delivered)`), and the "best-effort side effect" policy matches the
+   audit writer the app already had.
+3. **The template is hand-written, not a templating engine.** One message does not justify
+   a dependency; the CSS is inlined because Gmail strips `<style>` blocks; and the HTML
+   carries no tracking pixel, images or external stylesheet, all of which hurt deliverability
+   for transactional mail.
+4. **The console fallback fires only when `sendMail` returns false** — which covers
+   disabled *and* failed, so local dev needs no SMTP credentials while a rejecting server
+   still degrades gracefully instead of losing the link.
+5. **Verified against a real Mailpit container, not just mocks.** `docker run axllent/mailpit`
+   with `SMTP_HOST=127.0.0.1 SMTP_PORT=1025`, `MAIL_ENABLED=true`, then read the message back
+   through Mailpit's API: correct subject, the reset link in the text part, the button in the
+   HTML part. That is the only proof that the transport *options* (no auth, port 1025,
+   `secure: false`) are correct; unit tests cannot give it. Probe script and container were
+   deleted afterwards.
+
+### Interview Q&A (study cards for resume):
+
+**Q: Why does your email sender never throw?**
+A: Because the endpoint that calls it has a deliberate anti-enumeration contract — it answers
+`{ ok: true }` for every address, real or not. If a dead SMTP host turned that into a 500, the
+failure would occur only for addresses that exist, reintroducing precisely the oracle the
+contract exists to close. So sending is best-effort: catch, log server-side, return `false`,
+let the caller fall back to printing the reset link. Same policy as the audit writer.
+
+**Q: Why Nodemailer rather than a provider SDK?**
+A: Resend/SendGrid SDKs have nicer APIs but make the provider a compile-time dependency.
+SMTP is the common denominator every provider exposes, so one Nodemailer dependency keeps the
+provider an environment variable. The trade-off is a slightly more verbose transport setup.
+
+**Q: How do you test outbound email without credentials?**
+A: Run a local SMTP sink (Mailpit) in a container and point the app at it with `SMTP_HOST` /
+`SMTP_PORT` / `secure: false`. That exercises the real transport options that mocks can't,
+and reading the message back from the sink's API confirms recipient, subject and both body
+parts. Mocks still cover the branches (disabled, fallback) cheaply.
+
+---
+
+## Phase 4 (V2) — Two-Factor Authentication (TOTP)
+
+The profile page carried a dashed "Coming soon" 2FA card and the login form had no
+concept of a second step. Both are now real: TOTP (RFC 6238) via `otplib` + `qrcode`,
+an encrypted secret, hashed single-use recovery codes, and a challenge token that is
+deliberately worthless anywhere but one endpoint.
+
+### Mistakes during implementation:
+
+1. **Stale Prisma client — 20 phantom `tsc` errors.** After editing `schema.prisma` *and*
+   applying the migration, `tsc --noEmit` still reported 20 errors, all "property
+   `twoFactorEnabled` does not exist on type `User`". In Prisma 7 the client is *generated
+   code*: editing the schema and running a migration is not enough, because the type checker
+   reads the previously generated client. `npx prisma generate` cleared all 20 at once.
+   Remember this one — it looks like a schema mistake and is not.
+2. **The key fallback used `??` where it had to use `||`.** `CONFIG.twoFactor.encryptionKey`
+   falls back to `JWT_ACCESS_SECRET`. Docker passes an unset variable through as an EMPTY
+   STRING, and `""` is not nullish — so `??` would have accepted the blank string and derived
+   an AES key from `""`, which is a *different* key from the documented default. Every
+   enrolment made before `TOTP_ENCRYPTION_KEY` was filled in would have become undecryptable.
+   `||` treats `""` as absent, which is the intended meaning. This is a class of bug, not a
+   typo.
+3. **Reused the login mutation's `isSuccess` to show "Signed in — redirecting…".** `isSuccess`
+   flips to `true` as soon as *step 1* answers — which is exactly when the code prompt appears,
+   not when a session exists. The screen would have announced success before the second factor
+   was entered. Replaced with an explicit `signedIn` state set only by the shared
+   `finishLogin()` helper, so the flag means one thing: a real session is in the store.
+
+### Key decisions:
+
+1. **Login contract is `200 + challengeToken`, not `401`.** With 2FA on, `POST /auth/login`
+   answers `200` with `{ twoFactorRequired: true, challengeToken }` and issues **no** access
+   token and **no** refresh cookie. A `401` was rejected because it is already the
+   wrong-password answer, so a client reading only the status code could not tell "bad
+   password" from "password accepted, enter a code". A mandatory second call to
+   `POST /auth/2fa/verify` exchanges the challenge plus the code for the normal session
+   payload. The password is verified *before* the 2FA branch, so "2FA required" is never an
+   enumeration oracle either.
+2. **The token `type` claim is the actual security boundary, not the signature.** The
+   challenge is signed with the same `accessSecret` as a real access token, so a valid
+   signature proves nothing about which kind of token it is. What separates them is the
+   `type` literal — `2fa_challenge` vs `access` — and each verifier rejects the other's.
+   Without it the challenge would have been a fully valid Bearer token for its 5-minute life,
+   silently bypassing 2FA. There is a test asserting a challenge token gets `401` from
+   `GET /auth/me`.
+3. **The secret is ENCRYPTED, not hashed** (AES-256-GCM, format `v1.<iv>.<tag>.<ciphertext>`,
+   all base64url). This is not inconsistent with the hashed recovery codes: verifying a 6-digit
+   code means *recomputing* it, so the server must be able to recover the plaintext secret —
+   hashing it would make verification impossible. GCM also authenticates the ciphertext, so a
+   tampered row fails closed instead of decrypting to garbage. The `v1.` prefix makes a future
+   key rotation *detectable* rather than silently misparsed.
+4. **Enrolment is two-phase.** `setup` stores the secret but leaves `twoFactorEnabled` false;
+   only `enable` — which requires a live code, proving the secret reached the device — flips
+   the flag. A user who scans the QR code and closes the tab cannot lock themselves out behind
+   a secret they never imported. `setup` also regenerates the secret on every call, so an
+   abandoned attempt can never be the one that ends up enrolled.
+5. **Disabling requires the password.** Without it, a hijacked live session could quietly strip
+   the second factor, which defeats the point of having one. The secret and recovery codes are
+   wiped on disable, so re-enabling starts from a fresh secret rather than resurrecting the old.
+6. **Recovery codes are ten, hex, grouped 5-5-5-5.** Hex because 0/O and 1/l transcription
+   errors are the main way a hand-typed code goes wrong; 80 bits is ample for a code that is
+   single-use and rate-limited. They are returned in plaintext exactly once and stored only as
+   hashes; consumption filters the array with `{ set: [...] }` rather than `{ push }`, so two
+   concurrent verifications cannot both spend the same code.
+
+### Interview Q&A (study cards for resume):
+
+**Q: Where exactly is the security boundary between your 2FA challenge token and a session?**
+A: Not the signature — both are signed with the same access secret, so a valid signature only
+proves *we* minted the token. The boundary is the `type` claim: `2fa_challenge` vs `access`.
+Each verifier parses with a Zod schema whose `type` is a literal, so `verifyAccessToken` rejects
+a challenge and `verifyTwoFactorChallenge` rejects an access token. Drop that claim and the
+challenge becomes a Bearer token anyone can use to skip 2FA for five minutes.
+
+**Q: Why store the TOTP secret encrypted instead of hashed, when you hash passwords?**
+A: Because the operations differ. A password is only ever *compared*, so a one-way hash is
+enough. A TOTP code must be *recomputed* from the stored secret to be verified, so the secret
+has to be recoverable — that rules out hashing. AES-256-GCM gives confidentiality plus tamper
+detection (a modified ciphertext fails the auth tag), and a version prefix keeps future key
+rotation detectable.
+
+**Q: Why does disabling 2FA require the password?**
+A: A live session is bearer authority; if stripping the second factor needed only the session,
+a stolen token would let an attacker remove the very protection that would have stopped them.
+Requiring the password makes disabling require the one thing a session alone does not grant.
+
+---
+
+## Phase 5 (V2) — Product Image Upload
+
+`Product` was the only catalog entity with no image column (`Employee` already had one),
+while the UI drew a gradient placeholder. This phase adds the column, the upload path,
+the serving path, and the two UI touch points — with the spec's guardrails (PNG/JPG/WebP,
+2 MB, UUID filenames) enforced on the server.
+
+### Mistakes during implementation:
+
+1. **The plan's nginx step was superseded — and the reason is worth keeping.** The plan said
+   mount static at `/uploads` and add a `location` to `nginx.conf`. Mounting at
+   `/api/v1/uploads` instead rides the `location /api/` rule nginx already has, so *no nginx
+   change is needed at all*, and one relative path resolves identically in dev (`:5000`),
+   Docker and production. A second top-level `/uploads` location would have added a second
+   path prefix the frontend had to know about.
+2. **First test run: 10 failures, all Prisma `P2022`.** "The column `Product.imageUrl` does not
+   exist in the current database", cascading into `Cannot read properties of undefined
+   (reading 'id')`. `migrate dev` had been applied to `bs_db`, but it *only ever migrates the
+   DEVELOPMENT database* — the suite runs against `bs_test`, which had never seen the migration.
+   Fixed with `npx prisma migrate deploy` pointed at `bs_test` and verified directly in `psql`
+   against both `_prisma_migrations` and `information_schema.columns`. Same family of trap as
+   the stale-client lesson: each environment carries its own schema state.
+3. **`UPLOAD_DIR` set from `tests/setup.ts` had no effect.** `setup.ts`'s imports are hoisted
+   above its statements, so `config/env.ts` — which resolves `UPLOAD_DIR` to an absolute path
+   once, at import time — had already run. Moved into `vitest.config.ts`'s `test.env`, which
+   Vitest applies *before any module import*, matching the existing `DATABASE_URL` entry.
+
+### Key decisions:
+
+1. **Serve uploads from Express at `/api/v1/uploads`, and store a RELATIVE path.** `imageUrl`
+   holds `/api/v1/uploads/<uuid>.png`, never an absolute URL, so one row is correct in all
+   three places the app runs. The cost moves to the browser — `resolveAssetUrl()` — which is
+   small and paid once, in exchange for a row that never has to be migrated.
+2. **The extension comes from the bytes, not the filename.** `detectImageType()` checks magic
+   bytes (PNG signature, `FF D8 FF` for JPEG, `RIFF….WEBP`). The client's `Content-Type` and
+   filename are ignored for anything but display, so `logo.png` containing a JPEG is stored as
+   `<uuid>.jpg` and served as `image/jpeg` (there is a test asserting exactly that). Filenames
+   are server-generated UUIDs, and `deleteImageByUrl()` still double-guards with `path.basename()`
+   plus a `startsWith(resolve(dir) + sep)` check, because a helper that is only ever handed a UUID
+   should not *rely* on that.
+3. **`authorize()` runs before `multer`, and storage is memory, not disk.** The route is
+   `authorize("inventory.products.update") → uploadSingleImage("file") → controller`, so an
+   unauthenticated or unauthorised caller is rejected before a byte is buffered. `memoryStorage`
+   at a 2 MB cap means a rejected upload (wrong type, oversize, failed transaction) leaves
+   nothing on disk to clean up — the disk variant writes first and needs an unlink on every
+   rejection path, including the ones that throw before the handler.
+4. **Write the file before the row; delete the previous file only after commit, best-effort.**
+   The file is written first so a bad image is rejected without a DB round-trip and a row never
+   points at a missing file. If the transaction fails, the new file is deleted and the row still
+   points at the old one. The *previous* file is deleted only after commit, when nothing
+   references it — and failing to delete it must not turn a successful upload into an error.
+5. **The static mount sits above the rate limiter.** `standardLimiter` allows 100 requests /
+   15 min; a 24-thumbnail grid would spend a quarter of that budget merely rendering. Serving
+   images before the limiter keeps the budget for the API calls it exists to protect. The
+   comment in `app.ts` says so, since the order looks arbitrary otherwise.
+6. **The Dockerfile must own the upload directory.** Docker seeds a **brand-new** named volume
+   from the image's directory contents *and ownership*. If `/app/uploads` does not exist in the
+   image, the volume is created root-owned and every upload then fails `EACCES` **while the
+   container healthcheck still reports healthy** — a failure visible only on the first real
+   upload. So the Dockerfile does `RUN mkdir -p /app/uploads && chown -R nodeuser:nodegrp /app`.
+
+### Interview Q&A (study cards for resume):
+
+**Q: Why store a relative image path instead of a full URL?**
+A: A full URL bakes the environment into the data: a row written in dev (`http://localhost:5000/...`)
+is wrong behind nginx and wrong in production, so every row must be migrated on deploy. A relative
+path plus an origin resolved at render time (`resolveAssetUrl`, from `NEXT_PUBLIC_API_URL`) is
+correct everywhere at once. The one-time cost is a client-side helper; the payoff is data that is
+environment-independent.
+
+**Q: Why memory storage for the upload, and why authorize before multer?**
+A: Order first: `authorize()` before `multer` rejects an unauthenticated/unauthorised caller before
+their bytes are buffered. Then, at a 2 MB cap the whole file fits comfortably in memory, and
+buffering means a rejected upload leaves nothing on disk — no unlink on any rejection path,
+including the ones that throw before reaching the handler. `diskStorage` would write first and
+have to clean up on every failure branch.
+
+**Q: A container reports healthy but uploads fail with EACCES. What is going on?**
+A: Health checks prove the process is up, not that its volume is writable. If the image does not
+contain the upload directory, Docker seeds a brand-new named volume from the image (root-owned),
+and writes fail `EACCES` only when the first real upload arrives. The fix is to create and `chown`
+the directory in the Dockerfile so the volume inherits the right ownership.
+
+---
+
+## Phase 6 (V2) — Playwright End-to-End Suite
+
+Phase 11 in the original build specified Playwright and never wrote it. The suite took an
+afternoon and then found **four production bugs no unit test could have caught** — which is
+the part worth reading.
+
+### Mistakes during implementation:
+
+1. **The POS sold inventory without ever reducing it.** A spec stocked 10 units, sold 1, and
+   expected 9; it got **10**. A direct `psql` probe showed the order row had `warehouseId`
+   `NULL` and the only `StockMovement` was the manual `IN`. Root cause was three layers down:
+   `ListWarehousesSchema.isActive` was a raw `z.boolean().optional()`. Express hands every query
+   value over as a **string**, so `?isActive=true` failed validation with a **422** — meaning
+   `useListWarehousesQuery({ pageSize: 100, isActive: true })` always returned nothing, the POS's
+   `defaultWarehouseId` was `undefined`, and `checkout()` guards its entire stock block behind
+   `if (dto.warehouseId)` while the validator accepts a missing `warehouseId` because it is
+   `.optional()`. The order was created, the money was taken, and no stock moved — silent until
+   an E2E test compared two numbers. The 422 was the real cause of a missing warehouse, and
+   therefore of the missing stock movements.
+2. **The sibling sweep found the mirror-image bug.** `z.coerce.boolean()` is `Boolean(value)`,
+   and `Boolean("false") === true` — so `?lowOnly=false` on `/inventory/stock` behaved *exactly*
+   like `?lowOnly=true`, silently. Both mistakes are the same mistake: treating a query string as
+   if it were a typed value. Fixed with one primitive, `backend/src/utils/query.ts`'s
+   `booleanQuery`, whose union `z.union([z.boolean(), z.enum(["true", "false"])])` plus a
+   `transform` is the part that matters — `.optional()` alone would still reject the raw
+   `z.boolean()` case. Applied across warehouses, stock, credits, refunds and the three HRM
+   list schemas.
+3. **Every HRM page rendered empty while the API returned rows.** All 30 hooks in
+   `frontend/src/lib/api/hrmEndpoints.ts` declared their return type as the *unwrapped* payload
+   (`{ items, meta }`, `EmployeeItem`) while every HRM controller answers through
+   `successResponse` — `{ success, data, message }`. So `res?.items` was always `undefined`: the
+   leave table, attendance table, departments/designations/employees tables and the HR overview
+   counters (`headcount`, `todayByStatus`, `upcomingAnniversaries`) all read past the envelope
+   and rendered zeros and empty states over data that was arriving correctly. Fixed with a single
+   `transformResponse: unwrap` applied to all 30 endpoints — one line of introspection, rather
+   than each of a dozen pages digging into `res.data.data`.
+4. **The app-wide rate limiter locked real users out.** Running the three specs back-to-back,
+   the second and third failed: the UI navigated to `/login?expired=1` and could not get back in.
+   `standardLimiter` is mounted on `/api/v1` at **100 requests / 15 min / IP, counting every call
+   including authenticated ones**; three specs driving the real UI exhaust it, and once it trips
+   every request `429`s and the refresh interceptor bounces the user to the login page. This is a
+   product defect, not a test artefact — a normal user clicking around for a few minutes hits it
+   too. `RATE_LIMIT_MAX` is now overridable (`${RATE_LIMIT_MAX:-100}`) so the suite raises the
+   ceiling while the **production default stays 100**, and `DISABLE_RATE_LIMIT` was deliberately
+   left `false` — raising the ceiling is the honest fix; switching the limiter off would mean CI
+   never exercises it. The real brute-force shield, `authStrictLimiter` (10/15 min), was untouched.
+
+### Key decisions:
+
+1. **A root `playwright/` package, not a folder inside `frontend/`,** so the browser binaries and
+   test deps stay out of both production images and the production dependency tree.
+2. **No `webServer` block — the suite runs against the real Docker Compose stack.** That is the
+   only environment that exercises nginx, the built Next.js image and the compiled Express server
+   together; pointing at `next dev` would test a different application than the one shipped.
+3. **`readAccessToken()` goes through `POST /auth/refresh`, not the login response.** The access
+   token lives only in Redux memory, so it cannot be read back out of storage; and `refresh` is
+   deliberately outside `authStrictLimiter`, so minting a token for `afterAll` cleanup costs no
+   login budget. Each spec logs in exactly **once**, through the real UI.
+4. **Locators avoid `data-testid` entirely** — there are none in this codebase. They use `id`,
+   labels, placeholders, roles and visible text, which is also why `exact: true` appears so often:
+   `getByRole(name)` and `getByText(str)` are case-insensitive *substring* matches, so `"Customers"`
+   also matches the empty state's "No customers found".
+5. **`--retries=0` locally, not `--retries=1`.** `process.env.CI` is truthy inside this sandbox
+   shell, so the config would otherwise retry, and each retry re-runs a login against a
+   10-per-15-minute budget.
+6. **The UI must be loaded from `http://localhost`, not `127.0.0.1`.**
+   `NEXT_PUBLIC_API_URL=http://localhost/api/v1` is baked into the bundle at build time and the
+   CORS allowlist is `FRONTEND_URL=http://localhost:3000`, so loading `127.0.0.1` makes every
+   request cross-origin and produces same-origin failures that look like API bugs. (Note this is
+   the opposite direction from the *backend* rule in Phase 0, where Node must reach `127.0.0.1`
+   because Docker's loopback forward is IPv4-only.)
+7. **Isolation over speed.** Each spec creates its own rows under a `runId()` suffix and deletes
+   them in `afterAll` through the API, and the gate is **two clean back-to-back runs** — proof of
+   isolation, not a lucky first run.
+
+### Interview Q&A (study cards for resume):
+
+**Q: An end-to-end test found a bug no unit test could. Walk me through it.**
+A: The POS sold stock without decrementing it. Unit tests passed because they exercised
+`checkout()` directly with a `warehouseId`; the E2E test drove the real UI, which fetched
+warehouses with `?isActive=true`. That query hit a `z.boolean()` query validator, so Express's
+string value failed validation with a 422, the warehouse list came back empty, `defaultWarehouseId`
+was `undefined`, and `checkout()` silently skipped its whole stock block. The bug lived in the seam
+between a validator, a query string and a UI default — visible only end to end.
+
+**Q: Why does a rate limiter count authenticated requests?**
+A: By default `express-rate-limit` keys on IP and counts everything unless you add a `skip`
+predicate. Counting authenticated calls too is defensible as a coarse DoS shield, but at
+100 req / 15 min it is low enough that a user *clicking around for a few minutes* gets logged out
+— the refresh interceptor receives a 429, can't rotate, and bounces to the login page. That is a
+real product defect, not a test annoyance; the fix is to make the ceiling configurable and keep the
+brute-force shield (`authStrictLimiter` on `/auth/*`) separate and low.
+
+**Q: What did writing the E2E layer teach you that unit tests hadn't?**
+A: That a `{ success, data, message }` envelope only works if every consumer agrees on it. All 30
+HRM hooks were typed against the *unwrapped* payload while the controllers wrapped it, so the API
+returned rows and every HRM page rendered empties and zeros — no error, no failing unit test,
+because each side was internally consistent. Also: locator choice matters (`getByText` is a
+substring match, so `exact: true` is often load-bearing), and build-time env vars
+(`NEXT_PUBLIC_*`) mean the hostname you load the UI from is part of the system under test.
 

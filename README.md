@@ -72,18 +72,18 @@ A single-organization business management suite with Authentication, RBAC, CRM, 
 |-------|-------|
 | Backend unit/integration | Vitest + Supertest |
 | Frontend unit | Vitest + React Testing Library + jsdom |
-| End-to-end | _Not implemented._ Planned as Playwright; there is no config or spec file in the repo today. Coverage is backend Vitest + Supertest and frontend Vitest + RTL. |
+| End-to-end | **Playwright** (`playwright/`). Three specs drive the real UI against the running Docker stack — nginx on port 80 — covering login → CRM, the POS sale → stock decrement flow, and the HRM leave approval flow. See [End-to-end tests](#-end-to-end-tests-playwright). |
 
 ---
 
 ## 📦 Modules (Feature Modules (Full list)
-1. **Authentication** — JWT access tokens, HTTP-only refresh tokens with rotation, password hashing, forgot password (bcrypt), rate-limited login.
-2. **RBAC & Admin** — 6 system roles + fine-grained permission codes, audit logs, user management.
+1. **Authentication** — JWT access tokens, HTTP-only refresh tokens with rotation, password hashing, rate-limited login, **two-factor authentication (TOTP)**, and **real SMTP delivery** for password-reset email.
+2. **RBAC & Admin** — 7 system roles + 151 fine-grained permission codes, audit logs, user management.
 3. **Dashboard & Analytics** — KPI cards, sales trend, lead pipeline, top products, attendance summary.
-4. **CRM** — Customers w/ contacts, lead pipeline (6 statuses), activity timeline.
-5. **Inventory** — Categories, products (SKU unique), warehouses, per-warehouse stock w/ movement history & adjustments.
-6. **POS & Sales** — Cart (localStorage), atomic checkout transaction prevents negative stock (row-level locking), orders, invoices, payments.
-7. **HRM** — Departments, attendance (employees), departments, designations, attendance, leave workflow.
+4. **CRM** — Customers w/ contacts, lead pipeline (6 statuses), activity timeline, opportunities, contracts.
+5. **Inventory** — Categories, products (SKU unique, **uploadable image**), warehouses, per-warehouse stock w/ movement history & adjustments.
+6. **POS & Sales** — Cart (localStorage), atomic checkout transaction prevents negative stock (row-level locking), orders, invoices, payments, refunds, credits.
+7. **HRM** — Departments, designations, attendance, leave workflow.
 
 ---
 
@@ -270,15 +270,120 @@ not support. The application uses `DATABASE_URL`; `prisma.config.ts` prefers
 
 | Email | Password | Role | Permissions |
 |-------|----------|------|-------------|
-| `admin@example.com` | `Admin@123` | SUPER_ADMIN | Everything (`*.*`) |
+| `admin@example.com` | `Admin@123` | SUPER_ADMIN | All 151 permissions (granted explicitly) |
 
 All seven roles (SUPER_ADMIN, ADMIN, MANAGER, SALES, CASHIER, HR, VIEWER) and their
-143 permission codes are created too — but only the admin account exists. Create
+**151** permission codes are created too — but only the admin account exists. Create
 users for the other roles from **Admin → Users** once logged in.
 
 **On first login you are required to change the password.** That is deliberate:
 default credentials should not survive first use. Click **"Sign out instead"** to skip
 it and keep `Admin@123` working for repeated local demos.
+
+---
+
+## 🧪 End-to-end tests (Playwright)
+
+The suite drives the real UI against the running Docker stack — the same origin,
+the same nginx, the same database. The config deliberately declares **no
+`webServer`**, so start the stack first.
+
+```bash
+# 1. Stack running (Option A above) and seeded
+
+# 2. One-time: create the E2E account
+cd backend
+npm run seed:e2e
+
+# 3. Run the suite
+cd ../playwright
+npm install
+npx playwright install --with-deps chromium
+npm run test:e2e
+```
+
+| Spec | Flow |
+|---|---|
+| `auth-crm-flow` | sign in → create a customer → it appears in the search results |
+| `pos-inventory-flow` | create a product → stock it in via the movements ledger → sell it at the POS → the stock level drops |
+| `hrm-leave-flow` | file a leave request → approve it → the status updates |
+
+Things worth knowing before you run it:
+
+- **Load the app from `localhost`, never `127.0.0.1`.** `NEXT_PUBLIC_API_URL` is
+  baked into the browser bundle at build time and the backend's CORS allowlist is
+  `http://localhost:3000`, so a different hostname produces same-origin failures
+  that look like API bugs.
+- **`RATE_LIMIT_MAX` must be raised for the suite.** The global limiter allows 100
+  requests per 15 minutes *per IP, across every `/api/v1` call — authenticated ones
+  included*. Three specs driving the real UI blow straight past that; once it trips
+  everything answers 429 and the UI bounces to `/login?expired=1`. It is overridable
+  without editing the compose file:
+
+  ```powershell
+  $env:RATE_LIMIT_MAX="20000"; docker compose up -d backend
+  ```
+
+  `DISABLE_RATE_LIMIT` is **not** an option here: it is double-guarded and only takes
+  effect under `NODE_ENV=development`, while the container runs as `production`.
+- **Each spec signs in exactly once.** `POST /auth/login` sits behind a stricter
+  10-requests-per-15-minutes limiter, so retries burn that budget fast — use
+  `--retries=0` locally. (`process.env.CI` is truthy in some shells, which otherwise
+  makes the config retry.)
+- **The specs write real rows.** Every created name carries a per-run suffix and is
+  deleted in `afterAll` through the API, so repeated runs do not accumulate junk.
+
+### E2E credentials
+
+| Variable | Default | Used by |
+|---|---|---|
+| `E2E_ADMIN_EMAIL` | `e2e@example.com` | `npm run seed:e2e` and the specs |
+| `E2E_ADMIN_PASSWORD` | `E2eAdmin@123` | same |
+| `E2E_BASE_URL` | `http://localhost` | `playwright.config.ts` |
+
+---
+
+## 🔧 Environment Variables
+
+Two template files, every value validated by Zod at boot:
+
+| File | Used for |
+|---|---|
+| `backend/.env.example` | local `npm run dev`, migrations, seeding, tests |
+| `frontend/.env.local.example` | the Next.js dev server |
+
+Copy them rather than retyping — `backend/.env.example` documents the reasoning for
+each group. Under Docker every variable has a working default in `docker-compose.yml`,
+so the stack starts with no `.env` at all.
+
+| Group | Variables |
+|---|---|
+| Email / SMTP | `MAIL_ENABLED` (default `false`), `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` |
+| Two-factor (TOTP) | `TOTP_ENCRYPTION_KEY` (falls back to `JWT_ACCESS_SECRET`), `TOTP_ISSUER` |
+| File uploads | `UPLOAD_DIR`, `UPLOAD_MAX_BYTES` (default 2 MB) |
+| Rate limiting | `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`, `DISABLE_RATE_LIMIT` |
+
+> `MAIL_ENABLED=false` is a fully supported mode: `forgot-password` prints the reset
+> link in the backend log instead of sending it, so local development needs no SMTP
+> credentials at all. With `MAIL_ENABLED=true` any SMTP provider works — Resend,
+> SendGrid, SES, Gmail, Mailpit and a plain relay all speak the same protocol, and
+> `backend/.env.example` lists the common combinations.
+>
+> `TOTP_ENCRYPTION_KEY` is the one worth protecting. TOTP secrets are stored
+> **encrypted, not hashed** — verifying a 6-digit code means recomputing it, so the
+> server must be able to recover the plaintext — which means rotating this key makes
+> every enrolled user's 2FA unusable until they re-enrol.
+
+### Storage — the `uploads` volume
+
+`docker compose up -d --build` replaces a container's writable layer, so product
+images are written to the **`bs-uploads` named volume** mounted at `/app/uploads`.
+Without it every image would 404 after a rebuild while the database rows still
+pointed at them. The backend image creates and chowns that directory at build time;
+if it did not, Docker would seed the new volume root-owned and every upload would
+fail `EACCES` *while the healthcheck still reported healthy*.
+
+`docker compose down -v` deletes this volume along with the database.
 
 ---
 
@@ -308,6 +413,17 @@ it and keep `Admin@123` working for repeated local demos.
 | `npx prisma migrate dev --name your_migration_name` | Auto-generate + apply a migration after schema.prisma changes |
 | `npx prisma migrate deploy` | Apply pending migrations (production / CI) |
 | `npm run seed` | Seed all system data + demo fixtures. Prints the target database first. Add `-- --no-demo` to skip demo fixtures. |
+| `npm run seed:e2e` | Additionally create the Playwright account (`e2e@example.com` / `E2eAdmin@123`, SUPER_ADMIN, no forced password change). Deliberately **not** part of `npm run seed` — that account must never appear in a real database. Idempotent. |
+
+### Playwright (`cd playwright`)
+| Command | Purpose |
+|---------|---------|
+| `npm ci` | Install the test runner (kept out of both app images) |
+| `npx playwright install --with-deps chromium` | Download the browser — once per machine |
+| `npm run test:e2e` | Run the suite against the running stack. Use `--retries=0` locally. |
+| `npm run test:e2e:headed` | Same, with a visible browser |
+| `npm run test:e2e:ui` | Playwright's interactive UI mode |
+| `npm run test:e2e:report` | Open the HTML report from the last run |
 
 ### Docker (repo root)
 | Command | Purpose |
@@ -337,12 +453,15 @@ it and keep `Admin@123` working for repeated local demos.
 Business_Suite/
 ├── README.md              ← This file
 ├── BUILD_PROCESS.md       ← Step-by-step build book, all 14 phases
+├── PLAN.md                ← V2 completion plan (phases, gates, scope)
+├── DEVELOPMENT_JOURNAL.md ← V2 engineering journal: decisions, bugs, root causes
 ├── docker-compose.yml     ← Full stack: postgres + backend + frontend + nginx
 ├── nginx.conf             ← Reverse proxy: / → frontend, /api and /health → backend
 ├── .dockerignore          ← (repo root; each build context has its own)
-├── .github/workflows/     ← CI: backend and frontend pipelines
+├── .github/workflows/     ← CI: backend, frontend and end-to-end (Playwright) pipelines
 ├── backend/               ← Express 4.21 + Prisma REST API (has its own Dockerfile)
 ├── frontend/              ← Next.js 16 App Router UI (has its own Dockerfile)
+├── playwright/            ← End-to-end specs, run against the Docker stack
 └── docs/                  ← Architecture / Database / API / RBAC / Learning notes
 ```
 

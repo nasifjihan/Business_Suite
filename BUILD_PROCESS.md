@@ -30,6 +30,7 @@
 22. [API ENDPOINT CHEAT SHEET](#22-api-endpoint-cheat-sheet)
 23. [LEARNING NOTES & KEY DECISIONS](#23-learning-notes--key-decisions)
 24. [INTERVIEW PREP — ANSWERS TO LIKELY QUESTIONS](#24-interview-prep--answers-to-likely-questions)
+25. [V2 COMPLETION PHASES — Hygiene · Credential · Email · 2FA · Uploads · E2E](#25-v2-completion-phases--hygiene--credential--email--2fa--uploads--e2e)
 
 ---
 
@@ -235,7 +236,7 @@ docs/learning-notes.md
 4. Create `tsconfig.json` with strict mode, ESNext modules, outDir `./dist`
 5. Create `src/config/env.ts` — validates environment variables with Zod (catches missing .env early)
 6. Create `src/lib/prisma.ts` — singleton PrismaClient instance (prevents connection leaks in dev)
-7. Create `src/lib/errors.ts` — custom typed error classes: `AppError`, `ValidationError`, `AuthenticationError`, `AuthorizationError`, `NotFoundError`, `ConflictError`, `BusinessRuleError`
+7. Create `src/lib/errors.ts` — custom typed error classes: `AppError`, `BadRequestError`, `UnauthorizedError`, `ForbiddenError`, `NotFoundError`, `ConflictError`, `UnprocessableEntityError`, `TooManyRequestsError`
 8. Create `src/lib/response.ts` — `successResponse()` and `errorResponse()` helpers for the standard API envelope
 9. Create `src/middleware/errorHandler.ts` — centralized Express error middleware (catches all errors, maps typed errors to HTTP codes, never exposes stacks in prod)
 10. Create `src/middleware/notFound.ts` — 404 handler for unmatched routes
@@ -537,7 +538,7 @@ Seed pattern: `upsert` for every Permission code (safe rerun = idempotent); upse
 | File | Change | Purpose |
 |---|---|---|
 | `auth.ts` (rewritten, 96 lines) | `authenticate(required=true)` wrapped as async IIFE. After JWT verify → SELECT User (with role + role.permissions → permission.code) from DB on **every** authenticated request. Builds flat `req.permissionCodes: string[]` = `user.role.permissions.map(rp=>rp.permission.code)`. Immediately throws `UnauthorizedError` 401 if `user.status !== ACTIVE`. | Guarantees admin status=INACTIVE deactivation takes effect on the user's very next API call (no 15-min JWT grace window — mitigates fired-employee risk). |
-| `authorize.ts` (55 lines) | Factory `authorize(...required: (string \| { any?: string[]; all?: string[] })[])` — supports 4 matchers: (a) exact `"users.create"` single string, (b) `{any:["users.read","roles.read"]}` OR-match, (c) `{all:["leads.read","customers.read"]}` AND-match, (d) `"*"` wildcard SUPER_ADMIN escape hatch (backend-only `hasAdminBypass` flag). | Single middleware covers every permission shape needed; applied in routes AFTER auth → rateLimit → validate. |
+| `authorize.ts` | Factory `authorize(...required: (string \| { all: string[] } \| { any: string[] })[])`. Each argument must pass (`Array.every`); `{any:[...]}` gives OR, `{all:[...]}` gives AND. Also carries a defensive `if (userCodes.includes("*")) return next()` short-circuit — **no role is granted `"*"`**, so it never fires; SUPER_ADMIN instead holds all 151 codes explicitly. | Single middleware covers every permission shape needed; applied in routes AFTER auth → rateLimit → validate. |
 | `audit.ts` (114 lines, Prisma7 strict typing fixed) | `writeAudit(tx, {userId,action,entityType,entityId,beforeData,afterData,metadata,ip,userAgent})`. `omitSensitive(any,["passwordHash","tokenHash","accessToken","refreshToken","jti","familyId"])` recursive scrubber. `tx` signature relaxed to duck-typed `{ auditLog: PrismaClient["auditLog"] }` (fixes Prisma7 Omit<PrismaClient,$connect/$disconnect/...> incompatibility). Create fields cast `Prisma.InputJsonValue` (read type JsonValue is narrower than create type). Entire function wrapped best-effort `try/catch` → audit failure **NEVER** aborts business transaction. | Append-only service-layer audit capture (simpler & more accurate beforeData than global middleware because services have the pre-read row). |
 
 #### Helpers added (backend/src/):
@@ -1887,7 +1888,7 @@ git rev-parse --short HEAD
 > **Status**: ✅ COMPLETE (editor — 2026-08-29)
 > **Last revision**: 2026-08-29 16:20 UTC+5 · 26 NEW files · 4 existing MODIFIED · 0 schema · 0 RBAC · backend ~52 planned tests (auth+CRM+inv+sale5+hrm8+dash6+rateLimit5) · frontend ~36 planned tests (StatusBadge8 + GlobalTable7 + GlobalModal6 + DateDisplay5 + DashboardCard6 + RTKtoast5 + boundaries6)
 
-**Scope rule repeated**: MVP ZERO NEW INSTALLS. Uses only installed packages: vitest 3.1.3 (back) + vitest 4.1.11 (front) + supertest 7.1.0 + @testing-library/react 16.3.2 + @testing-library/jest-dom 7 + jsdom 30. @vitest/coverage-v8 missing — scripts wired; plugin install `npm i -D @vitest/coverage-v8 --save-exact` left to user (single command line), no editor install per kickoff rules. NO Playwright/Cypress — user browser gates substitute E2E per spec.
+**Scope rule repeated**: MVP ZERO NEW INSTALLS. Uses only installed packages: vitest 3.1.3 (back) + vitest 4.1.11 (front) + supertest 7.1.0 + @testing-library/react 16.3.2 + @testing-library/jest-dom 7 + jsdom 30. @vitest/coverage-v8 missing — scripts wired; plugin install `npm i -D @vitest/coverage-v8 --save-exact` left to user (single command line), no editor install per kickoff rules. This phase deliberately shipped **no** browser E2E layer — user browser gates stood in for it. (+E2E note: a Playwright suite was added later, in V2 Phase 6 — see §25.)
 
 ---
 
@@ -1989,7 +1990,8 @@ npm run test -- src/tests/integration/rate_limit.test.ts
 
 # Step D Full backend suite
 npm run test
-# (Expected ~45 of 52 pass first run; 7 skip are optional endpoints not exposed - register, heavy rate limit loops)
+# (Historical — this phase's first run: ~45 of 52 pass; 7 skip were optional endpoints not exposed.
+#  V2 Phase 6 repaired/re-enabled those: current suite is 77 passed / 0 skipped across 12 files.)
 
 # Step E FRONTEND individual files
 cd ..\frontend
@@ -2790,8 +2792,18 @@ business-suite/
 │
 ├── BUILD_PROCESS.md                      ← THIS FILE — the book of how everything was built
 ├── README.md                             ← Quick-start guide for developers
-├── docker-compose.yml                    ← Phase 13: Local Docker stack (postgres+backend+optional nginx/pgadmin)
+├── PLAN.md                               ← V2 completion plan (Phases 0–8) + progress tracker
+├── DEVELOPMENT_JOURNAL.md                ← Phase-by-phase log: decisions, problems, verification
+├── docker-compose.yml                    ← Local Docker stack (postgres + backend + frontend + nginx)
+├── nginx.conf                            ← Reverse proxy (bind-mounted into the nginx container, NOT a folder)
+├── .dockerignore
 ├── .gitignore
+│
+├── .github/
+│   └── workflows/
+│       ├── backend-ci.yml                ← Backend typecheck + vitest
+│       ├── frontend-ci.yml               ← Frontend typecheck + vitest
+│       └── e2e-ci.yml                    ← Playwright end-to-end suite against the built Docker stack
 │
 ├── frontend/                             ← Next.js Frontend Application
 │   ├── .env.local                        ← NEXT_PUBLIC_API_URL, NEXT_PUBLIC_APP_NAME (NOT in git)
@@ -3056,13 +3068,13 @@ business-suite/
 │   │   │   └── logger.ts                 ← Console/structured logging wrapper
 │   │   │
 │   │   ├── middleware/
-│   │   │   ├── auth.ts                   ← authenticate(): verifies JWT, attaches req.user
-│   │   │   ├── rbac.ts                   ← requirePermission('products.create'): 403 if no match
+│   │   │   ├── auth.ts                   ← authenticate(): verifies JWT, loads user + req.permissionCodes from DB
+│   │   │   ├── authorize.ts              ← authorize('products.create'): exact-code RBAC, throws ForbiddenError (403)
 │   │   │   ├── validate.ts               ← validate(schema): parses body/query via Zod, returns 422
-│   │   │   ├── rateLimiter.ts            ← express-rate-limit configs (authStrict, authenticated, public)
+│   │   │   ├── rateLimiter.ts            ← express-rate-limit configs (standardLimiter, authStrictLimiter)
 │   │   │   ├── errorHandler.ts           ← LAST middleware: catches all errors, maps typed classes → HTTP, enveloped
 │   │   │   ├── notFound.ts               ← 404 handler
-│   │   │   └── auditLogger.ts            ← After response: creates AuditLog record for mutations
+│   │   │   └── audit.ts                  ← writeAudit(tx, …): service-layer audit rows, inside the same $transaction
 │   │   │
 │   │   ├── modules/
 │   │   │   ├── auth/
@@ -3124,7 +3136,7 @@ business-suite/
 │   │   │
 │   │   ├── lib/
 │   │   │   ├── prisma.ts                 ← Singleton PrismaClient (prevents dev connection leaks)
-│   │   │   ├── errors.ts                 ← Typed error classes: AppError, ValidationError, AuthError, etc.
+│   │   │   ├── errors.ts                 ← Typed error classes: AppError + BadRequest/Unauthorized/Forbidden/NotFound/Conflict/UnprocessableEntity/TooManyRequests
 │   │   │   ├── response.ts               ← successResponse() / errorResponse() envelope helpers
 │   │   │   └── pagination.ts             ← parsePaginationParams(), buildPaginationMeta(), buildWhereClause()
 │   │   │
@@ -3160,16 +3172,17 @@ business-suite/
 │   ├── rbac.md                           ← Role/permission matrix
 │   └── learning-notes.md                 ← Updated after every phase: key lessons, mistakes, trade-offs
 │
-├── nginx/                                ← Phase 13 learning only
-│   ├── Dockerfile
-│   └── nginx.conf                        ← Reverse proxy: / → frontend, /api → backend
+├── nginx.conf                            ← (single file at the repo root — see above; there is no nginx/ folder)
 │
-└── playwright/                           ← Phase 11 E2E tests
-    ├── tests/
+└── playwright/                           ← Standalone E2E package (own package.json — not part of either app)
+    ├── specs/
+    │   ├── helpers.ts                    ← loginViaUi(), readAccessToken(), apiFor(), runId()
     │   ├── auth-crm-flow.spec.ts
     │   ├── pos-inventory-flow.spec.ts
     │   └── hrm-leave-flow.spec.ts
-    └── playwright.config.ts
+    ├── package.json
+    ├── playwright.config.ts              ← BASE_URL from E2E_BASE_URL ?? http://localhost, workers: 1
+    └── tsconfig.json
 ```
 
 ---
@@ -3564,8 +3577,8 @@ _(will be filled in)_
 > Two layers of protection. The **frontend layer** (UX only, not security) has a `<PermissionGate permission="users.delete">` wrapper that hides navigation items and buttons. I also redirect unauthorized dashboard routes. But I fully acknowledge — this is just UX. Anyone can forge a request in Postman with a valid token.
 >
 > The **real security is on the backend**. Every protected route goes through two Express middlewares in order:
-> 1. `authenticate()` — extracts the access token from the Authorization header, verifies the signature and expiry, loads the user along with their flattened permission codes (from role → role_permissions → permissions). Attaches to `req.user` and `req.permissions`. Returns 401 if anything is wrong.
-> 2. `requirePermission('users.delete')` — checks `req.permissions` against the required permission, supporting wildcard matching (admin role has `*.*` which matches anything). Returns 403 Forbidden if missing.
+> 1. `authenticate()` — extracts the access token from the Authorization header, verifies the signature and expiry, loads the user along with their flattened permission codes (from role → role_permissions → permissions) fresh from the DB on every request. Attaches `req.user` and `req.permissionCodes`. Returns 401 if anything is wrong.
+> 2. `authorize('users.delete')` — checks `req.permissionCodes` contains the required code (exact string match). Returns 403 Forbidden via `ForbiddenError` if missing. SUPER_ADMIN passes because it is granted *all 151 codes* explicitly — there is no `*.*` wildcard row in the DB.
 >
 > Even if a cashier somehow gets a POST /users call to hit the server (e.g. via curl with their valid auth token), it returns 403 and the user is never deleted. I have an explicit test for this.
 
@@ -3606,6 +3619,155 @@ _(will be filled in)_
 > **Fix**: I wrapped everything in a Prisma `$transaction` AND changed the stock check to use `SELECT ... FOR UPDATE` (Prisma supports this via the `for: 'update'` clause on `findUniqueOrThrow` inside a transaction). Now the first transaction locks the stock row, the second transaction blocks on the SELECT until the first commits, then it re-reads the updated value and correctly fails with 'Insufficient stock'. I also added a PostgreSQL CHECK constraint on `stock.quantity >= 0` as a defense-in-depth last line — even if my code has a bug, Postgres refuses to write negative stock. Then I wrote that concurrent Promise.all regression test so this can never come back."
 
 ---
+
+## 25. V2 COMPLETION PHASES — Hygiene · Credential · Email · 2FA · Uploads · E2E
+
+> **Status**: ✅ COMPLETE
+> **Plan**: [PLAN.md](PLAN.md) · **Log**: [DEVELOPMENT_JOURNAL.md](DEVELOPMENT_JOURNAL.md)
+>
+> After Phases 0–14 shipped a working, deployable application, a follow-up audit
+> found the build had stopped mid-stream: a deployment-plumbing branch ended in
+> commits named `asas` and `revice`, leaving dead code, a missing test layer, and
+> three features the code itself advertised as "Coming soon". These six phases
+> (numbered 0–8 in `PLAN.md`; the feature phases are repeated below) close them.
+> They are **numbered separately from the V1 phases above on purpose** — V1 Phase
+> 3 is "RBAC & Administration", V2 Phase 3 is "Email delivery".
+
+### 25.1 Phase 1 — Code hygiene (dead middleware removed)
+
+| File | Action |
+|---|---|
+| `backend/src/middleware/rbac.ts` | **Deleted** — zero imports anywhere; the real RBAC middleware is `authorize.ts` |
+| `backend/src/middleware/auditLogger.ts` | **Deleted** — mounted on `app.ts` but a no-op; the real audit path is `audit.ts`'s `writeAudit()` called inside service `$transactions` |
+| `backend/src/app.ts` | Imports + `app.use()` lines removed; middleware-ordering comment renumbered; reason left as an inline comment |
+
+Verify: `grep -r "middleware/rbac" backend/src` → no hits; `npm test` still green.
+
+### 25.2 Phase 2 — Security (committed credential scrubbed)
+
+A local database password had been committed in plaintext inside `Note.md`, and
+`README.md` told new developers to copy a `frontend/.env.local.example` that had
+never existed.
+
+| Change | Detail |
+|---|---|
+| `Note.md` | Placeholder-ised; real credential removed (owner must still **rotate the password** and purge it from git history with `git filter-repo`) |
+| `frontend/.env.local.example` | **Created** — the file README always referenced now exists |
+| `.dockerignore` / `.gitignore` | Confirmed to exclude `.env*` and `Note.md` from image builds and commits |
+
+### 25.3 Phase 3 — Email delivery (real SMTP)
+
+Password reset previously logged the reset token to the console. Now it sends a
+real email through `nodemailer`.
+
+| Piece | Where |
+|---|---|
+| Transport wrapper | `backend/src/lib/mailer.ts` — best-effort like `writeAudit()`: a dead SMTP host logs server-side and is swallowed so it can never fail the surrounding business action |
+| Config | `MAIL_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `MAIL_FROM` (+ `APP_URL` for the reset link) |
+| Endpoints touched | `POST /auth/forgot-password` (sends the reset link), `POST /auth/reset-password` (unchanged response shape) |
+| Tests | `auth-mail.test.ts`, `mailer.test.ts` |
+| Escape hatch | `MAIL_ENABLED=false` short-circuits to a logged no-op — the default in `.env.example`, so dev and CI never need a live SMTP server |
+
+### 25.4 Phase 4 — Two-factor authentication (TOTP)
+
+Migration `20261023025238_add_two_factor_auth` adds `User.twoFactorEnabled`,
+`User.twoFactorSecret` (encrypted at rest) and recovery codes.
+
+**The login contract becomes two-step:**
+
+| Step | Endpoint | Behaviour |
+|---|---|---|
+| 1 | `POST /auth/login` | If 2FA is **off** → the normal payload (access token + refresh cookie). If 2FA is **on** → `200` with a short-lived `challengeToken` and **no** access token and **no** refresh cookie |
+| 2 | `POST /auth/2fa/verify` | Exchanges `challengeToken` + a TOTP code for the normal login payload |
+
+Related: `POST /auth/2fa/setup` (returns the QR/secret), `POST /auth/2fa/enable`,
+`POST /auth/2fa/disable` (**password required** — deliberately, so a stolen laptop
+with a live session cannot silently weaken the account).
+
+| Piece | Where |
+|---|---|
+| TOTP generation/verification | `backend/src/utils/totp.ts` |
+| Secret encryption | `backend/src/utils/crypto.ts`, keyed by `TOTP_ENCRYPTION_KEY` (the one env var most worth protecting — it protects every enrolled secret) |
+| UI | `frontend/src/components/auth/TwoFactorCard.tsx` on the Profile page; the login form gains a second step |
+| Tests | `auth_two_factor.test.ts` |
+
+### 25.5 Phase 5 — Product image upload
+
+Migration `20261023031734_add_product_image_url` adds `Product.imageUrl`.
+
+| Piece | Where |
+|---|---|
+| Upload endpoint | `POST /api/v1/uploads` — multer `memoryStorage` + **magic-byte sniffing** (never trusts the client `Content-Type`) |
+| Static serving | `app.ts` mounts the uploads directory **above** the rate limiter so `<img>` requests are never throttled |
+| Storage | Docker named volume (see README's "Storage — the uploads volume"); the container filesystem is ephemeral |
+| UI | `frontend/src/components/form/ImageUploadField.tsx`, wired into the product form |
+| Tests | `inventory_product_images.test.ts` |
+
+Known limitation, documented rather than hidden: there is **no image-delete
+endpoint** — replacing an image orphans the old file.
+
+### 25.6 Phase 6 — Test layer (repaired unit suite + Playwright E2E)
+
+**6a — Repaired the unit suite.** Four tests were deleted because they asserted
+things that do not exist:
+
+- 2 covered a phantom `POST /auth/register` endpoint.
+- 2 were built on the false premise that `authedLimiter` is mounted (it is
+  exported from `rateLimiter.ts` but never registered anywhere).
+
+Three were repaired and re-enabled:
+
+- `rate_limit.test.ts` — rebuilt against a **fresh app** per test (the old version
+  assumed a shared store, but the store is keyed by IP and every supertest call
+  arrives from loopback). Asserts the first request is `200` and the **101st** is `429`.
+- `health.test.ts` — the 503 path was un-skipped.
+- `sales_checkout.test.ts` — refund body corrected to match `CreateRefundSchema`.
+
+Result: **12 files / 77 tests / 0 skipped** (was 48 passed + 7 skipped).
+
+**6b — Added the `playwright/` package.** A standalone npm package (its own
+`package.json`, deliberately **not** part of `frontend/` or `backend/`) so the E2E
+toolchain never leaks into either deployable's dependency tree.
+
+| Spec | Flow |
+|---|---|
+| `auth-crm-flow.spec.ts` | Login → CRM customer create → confirm it lists |
+| `pos-inventory-flow.spec.ts` | Login → POS checkout → stock actually decrements |
+| `hrm-leave-flow.spec.ts` | Login → file leave (employee picker) → confirm in list |
+
+Config: `BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost"`,
+`fullyParallel: false`, `workers: 1`, `retries: process.env.CI ? 1 : 0`, no `webServer`.
+Helpers live in `specs/helpers.ts` (`loginViaUi`, `readAccessToken`, `apiFor`, `runId`).
+
+**6c — Four production bugs the E2E suite flushed out.** All four were real defects
+in shipped code, not test artefacts:
+
+| # | Symptom | Root cause |
+|---|---|---|
+| 1 | POS checkout never decremented stock | `?isActive=true` returned **422** — Express delivers every query value as a **string**, so raw `z.boolean()` rejected it. The POS page could not resolve its default warehouse, so `checkout()` skipped its entire `if (dto.warehouseId)` block |
+| 2 | Every HRM page rendered empty | 30 RTK Query hooks declared the **unwrapped** payload type while the API returns the `successResponse` envelope — the data was `undefined`, silently zeroing the HR overview counters too |
+| 3 | Real users got locked out after ~100 requests | The **app-wide** `standardLimiter` (100 / 15 min) applies to every `/api/v1` call *including authenticated ones* |
+| 4 | `?lowOnly=false` behaved identically to `true` | `z.coerce.boolean()` — `Boolean("false") === true` |
+
+Root-cause fix for #1 and #4: a new **`booleanQuery`** union schema in
+`backend/src/utils/query.ts` that correctly parses the strings `"true"` / `"false"`,
+with the seven affected validators switched over. Bugs #1–#4 are now covered by
+regression tests.
+
+**6d — CI job.** `.github/workflows/e2e-ci.yml` reproduces the local conditions
+exactly: host-side `prisma migrate deploy` + `npm run seed` **before** the stack
+boots (the seed needs the tables first), demo fixtures included (the POS page
+auto-selects "Main Warehouse" created by the demo seed), `RATE_LIMIT_MAX=20000`
+with `DISABLE_RATE_LIMIT: "false"`, all four healthchecks awaited, and container
+logs + the Playwright report uploaded on failure.
+
+**6e — Endpoint audit (added during Phase 6/7).** Every frontend RTK Query
+endpoint was compared against its backend route. The audit surfaced that the CRM
+customer/lead routes authorize on **namespaced** codes (`crm.customers.read`, …)
+which Phase 3 had never created — so every CRM customer and lead endpoint
+answered **403 for every role, including SUPER_ADMIN** (no role can be granted a
+code that does not exist). `seed_phase5_crm.ts` now creates those 8 codes.
+Permission total: **143 → 151**; `RolePermission` rows: **554 → 590**.
 
 ---
 
