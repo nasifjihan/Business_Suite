@@ -40,6 +40,33 @@ export const RefreshTokenPayloadSchema = z.object({
 });
 export type RefreshTokenPayload = z.infer<typeof RefreshTokenPayloadSchema>;
 
+/**
+ * Second-step login (2FA) challenge.
+ *
+ * This token is handed out after a CORRECT password and before a TOTP code has
+ * been checked, so it must be usable for exactly one thing: exchanging itself
+ * for a session. Two properties enforce that —
+ *   - `type` is a distinct literal, so `verifyAccessToken` rejects it and it
+ *     can never be used as a Bearer token on any route;
+ *   - it expires in 5 minutes, the size of the window a user actually needs to
+ *     open their authenticator app.
+ *
+ * `jti` is carried so the challenge can be logged or, later, tracked
+ * server-side; nothing is stored for it today, which is safe precisely because
+ * it grants no access on its own.
+ */
+export const TwoFactorChallengePayloadSchema = z.object({
+  sub: z.string().uuid(),
+  jti: z.string().uuid(),
+  type: z.literal("2fa_challenge"),
+  iat: z.number().optional(),
+  exp: z.number().optional(),
+});
+export type TwoFactorChallengePayload = z.infer<typeof TwoFactorChallengePayloadSchema>;
+
+/** Challenge lifetime. Long enough to find a phone, short enough to not linger. */
+export const TWO_FACTOR_CHALLENGE_TTL = "5m";
+
 /* ── Sign ───────────────────────────────────────────────────────────────── */
 
 export function signAccessToken(payload: Omit<AccessTokenPayload, "type" | "iat" | "exp">): string {
@@ -55,6 +82,16 @@ export function signRefreshToken(payload: Omit<RefreshTokenPayload, "type" | "ia
     { ...payload, type: "refresh" as const },
     CONFIG.jwt.refreshSecret,
     { expiresIn: CONFIG.jwt.refreshExpiresIn } as SignOptions
+  );
+}
+
+export function signTwoFactorChallenge(
+  payload: Omit<TwoFactorChallengePayload, "type" | "iat" | "exp">
+): string {
+  return jwt.sign(
+    { ...payload, type: "2fa_challenge" as const },
+    CONFIG.jwt.accessSecret,
+    { expiresIn: TWO_FACTOR_CHALLENGE_TTL } as SignOptions
   );
 }
 
@@ -97,6 +134,27 @@ export function verifyRefreshToken(token: string): RefreshTokenPayload {
       throw new UnauthorizedError("Refresh token is invalid or malformed.");
     }
     throw new UnauthorizedError("Refresh token verification failed.");
+  }
+}
+
+export function verifyTwoFactorChallenge(token: string): TwoFactorChallengePayload {
+  try {
+    const decoded = jwt.verify(token, CONFIG.jwt.accessSecret);
+    const parsed = TwoFactorChallengePayloadSchema.safeParse(decoded);
+    if (!parsed.success) {
+      // Covers the important case: a validly-signed ACCESS token passed where a
+      // challenge is expected. `type` fails the literal check and we reject it.
+      throw new UnauthorizedError("Two-factor challenge is malformed.");
+    }
+    return parsed.data;
+  } catch (e) {
+    if (e instanceof UnauthorizedError) throw e;
+    if (e instanceof jwt.TokenExpiredError) {
+      throw new UnauthorizedError(
+        "Your two-factor challenge expired. Please sign in again.",
+      );
+    }
+    throw new UnauthorizedError("Two-factor challenge is invalid. Please sign in again.");
   }
 }
 

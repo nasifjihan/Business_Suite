@@ -36,6 +36,38 @@ const envSchema = z.object({
   DISABLE_RATE_LIMIT: z.string().default("false"),
   // Number of reverse proxies in front of the app (see CONFIG.trustProxy).
   TRUST_PROXY: z.string().optional(),
+
+  // ── Email / SMTP ───────────────────────────────────────────────────
+  // Every one of these is OPTIONAL. MAIL_ENABLED=false (the default) is a
+  // fully supported mode: forgot-password falls back to printing the reset
+  // link in the server terminal, so local dev needs no credentials at all.
+  //
+  // They are declared here rather than read from process.env directly for the
+  // Phase 14 lesson: a var used in docker-compose.yml but absent from this
+  // schema is silently ignored, which looks exactly like working config.
+  MAIL_ENABLED: z.string().default("false"),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || !Number.isNaN(parseInt(v, 10)), "SMTP_PORT must be numeric"),
+  SMTP_SECURE: z.string().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  // Accepts either "user@example.com" or the "Name <user@example.com>" form.
+  MAIL_FROM: z.string().optional(),
+
+  // ── Two-factor authentication ──────────────────────────────────────
+  // Key material for encrypting stored TOTP secrets (AES-256-GCM). OPTIONAL:
+  // falls back to JWT_ACCESS_SECRET so a local checkout needs no extra config.
+  //
+  // Set a dedicated value in production. Otherwise rotating
+  // JWT_ACCESS_SECRET — a routine, security-positive action — silently makes
+  // every enrolled TOTP secret undecryptable, locking users out until they
+  // re-enrol or use a recovery code.
+  TOTP_ENCRYPTION_KEY: z.string().optional(),
+  // Shown in the authenticator app next to the account name.
+  TOTP_ISSUER: z.string().default("Business Suite"),
 });
 
 const raw = envSchema.safeParse(process.env);
@@ -93,6 +125,38 @@ export const CONFIG = {
     // behaviour itself via the express-rate-limit mock in src/tests/setup.ts.
     disabled:
       raw.data.NODE_ENV === "development" && raw.data.DISABLE_RATE_LIMIT === "true",
+  },
+  /**
+   * Outbound email. `enabled` is the ONLY switch callers should read — never
+   * test SMTP_HOST yourself, or the meaning of "mail is configured" drifts
+   * between call sites.
+   */
+  mail: {
+    enabled: raw.data.MAIL_ENABLED === "true",
+    host: raw.data.SMTP_HOST,
+    // 587 = STARTTLS submission (the common port). Set SMTP_SECURE=true (and
+    // usually port 465) for implicit TLS.
+    port: raw.data.SMTP_PORT ? parseInt(raw.data.SMTP_PORT, 10) : 587,
+    secure: raw.data.SMTP_SECURE === "true",
+    // Both unset = an unauthenticated relay (Mailhog/Mailpit in dev, or a
+    // local MTA). One without the other is almost certainly a config mistake.
+    user: raw.data.SMTP_USER,
+    pass: raw.data.SMTP_PASS,
+    from: raw.data.MAIL_FROM ?? "Business Suite <no-reply@business-suite.local>",
+  },
+  twoFactor: {
+    // `||` (not `??`) on purpose: Docker passes unset variables through as
+    // EMPTY STRINGS, and a blank key would silently produce a different AES
+    // key than the documented fallback. sha256() in utils/crypto.ts turns
+    // either value into a full-entropy 256-bit AES key.
+    encryptionKey: raw.data.TOTP_ENCRYPTION_KEY || raw.data.JWT_ACCESS_SECRET,
+    issuer: raw.data.TOTP_ISSUER,
+    /** Digits in a TOTP code — also the length the API validates against. */
+    digits: 6,
+    /** Seconds a code stays valid. Authenticator apps assume 30. */
+    periodSec: 30,
+    /** Recovery codes handed out at enrolment. */
+    recoveryCodeCount: 10,
   },
 } as const;
 

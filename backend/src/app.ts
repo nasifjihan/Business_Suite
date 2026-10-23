@@ -7,10 +7,13 @@
  *   4. express.json ({ limit: '10mb' }) — parse JSON bodies
  *   5. cookieParser
  *   6. standardLimiter (global rate limit)
- *   7. auditLogger (start capture — it listens to res 'finish')
- *   8. /api/v1 routes
- *   9. notFoundHandler (any URL not matched above)
- *  10. errorHandler (CATCH ALL, LAST — never move this)
+ *   7. /api/v1 routes
+ *   8. notFoundHandler (any URL not matched above)
+ *   9. errorHandler (CATCH ALL, LAST — never move this)
+ *
+ * NOTE: there is deliberately no global audit-log middleware. A global one
+ * cannot capture the "before" snapshot a PATCH needs, so audit rows are written
+ * inside service-layer $transactions via writeAudit() in middleware/audit.ts.
  */
 import express from "express";
 import helmet from "helmet";
@@ -19,7 +22,6 @@ import compression from "compression";
 import cookieParser from "cookie-parser";
 import { CONFIG } from "./config/env";
 import { standardLimiter } from "./middleware/rateLimiter";
-import { auditLogger } from "./middleware/auditLogger";
 import { notFoundHandler } from "./middleware/notFound";
 import { errorHandler } from "./middleware/errorHandler";
 import { apiV1Router } from "./routes";
@@ -82,18 +84,15 @@ export function createApp() {
   // 5. Global rate limiting
   app.use(standardLimiter);
 
-  // 6. Audit logger (records after res finish)
-  app.use(auditLogger);
-
   app.use("/health", healthRouter);
 
-  // 7. API routes
+  // 6. API routes
   app.use("/api/v1", apiV1Router);
 
-  // 8. 404
+  // 7. 404
   app.use(notFoundHandler);
 
-  // 9. ★ ABSOLUTELY LAST: centralized error handler ★
+  // 8. ★ ABSOLUTELY LAST: centralized error handler ★
   app.use(errorHandler);
 
   return app;

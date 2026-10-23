@@ -5,18 +5,28 @@
  * validate them, call these methods, format responses.
  */
 import { randomUUID } from "crypto";
+import QRCode from "qrcode";
 import { prisma } from "@/lib/prisma";
 import { CONFIG } from "@/config/env";
 import { hashPassword, verifyPassword } from "@/utils/password";
 import {
   signAccessToken,
   signRefreshToken,
+  signTwoFactorChallenge,
   verifyRefreshToken,
+  verifyTwoFactorChallenge,
   RefreshTokenPayloadSchema,
   type AccessTokenPayload,
   type RefreshTokenPayload,
 } from "@/utils/jwt";
-import { hashRefreshToken } from "@/utils/crypto";
+import { hashRefreshToken, encryptSecret, decryptSecret } from "@/utils/crypto";
+import {
+  createTotpSecret,
+  buildOtpAuthUri,
+  verifyTotpCode,
+  createRecoveryCodes,
+  hashRecoveryCode,
+} from "@/utils/totp";
 import {
   UnauthorizedError,
   ForbiddenError,
@@ -25,16 +35,23 @@ import {
   UnprocessableEntityError,
 } from "@/lib/errors";
 import type { RoleType, UserStatus } from "@prisma/client";
+import { sendMail, renderPasswordResetEmail } from "@/lib/mailer";
 import type {
   LoginDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   ChangePasswordDto,
+  TwoFactorVerifyDto,
+  TwoFactorEnableDto,
+  TwoFactorDisableDto,
 } from "./validators";
 import type {
   LoginResponseDto,
   RefreshResponseDto,
   UserProfileDto,
+  TwoFactorChallengeDto,
+  TwoFactorSetupResponseDto,
+  TwoFactorEnableResponseDto,
 } from "./types";
 import type { Request } from "express";
 
@@ -86,32 +103,139 @@ function userToDto(user: {
 
 /* ── Service class ─────────────────────────────────────────────────────── */
 
+/**
+ * The user shape both login paths need: profile fields plus the role with its
+ * permissions. Declared once so `login` and `verifyTwoFactorLogin` cannot
+ * drift into selecting different columns.
+ */
+type SessionUser = {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  avatarUrl: string | null;
+  status: UserStatus;
+  mustChangePassword: boolean;
+  createdAt: Date;
+  lastLoginAt: Date | null;
+  role: {
+    id: string;
+    name: RoleType;
+    permissions: { permission: { code: string } }[];
+  } | null;
+};
+
+const USER_WITH_ROLE_INCLUDE = {
+  role: {
+    select: {
+      id: true,
+      name: true,
+      permissions: { select: { permission: { select: { code: true } } } },
+    },
+  },
+} as const;
+
+/**
+ * Mint a refresh-token family + access token for an already-authenticated
+ * user, and return the login payload.
+ *
+ * Shared by the two ways a session can begin: a plain password login, and the
+ * second step of a 2FA login. The 2FA variant would otherwise have to repeat
+ * every line below, and the two copies would eventually disagree about, say,
+ * whether lastLoginAt is stamped by recovery-code logins too.
+ */
+async function issueSession(
+  user: SessionUser,
+  meta: { ip: string | undefined; ua: string | undefined },
+): Promise<{ response: LoginResponseDto; refreshJwt: string }> {
+  const permissions =
+    user.role?.permissions?.map((rp) => rp.permission.code).filter(Boolean) ?? [];
+
+  const jti = randomUUID();
+  const familyId = randomUUID();
+
+  const accessPayload: Omit<AccessTokenPayload, "type" | "iat" | "exp"> = {
+    sub: user.id,
+    roleId: user.role?.id ?? "",
+    role: user.role?.name ?? "VIEWER",
+    jti,
+  };
+  const refreshPayload: Omit<RefreshTokenPayload, "type" | "iat" | "exp"> = {
+    sub: user.id,
+    jti,
+    familyId,
+  };
+  const accessJwt = signAccessToken(accessPayload);
+  const refreshJwt = signRefreshToken(refreshPayload);
+
+  const ttlSec = expiresInToSeconds(CONFIG.jwt.refreshExpiresIn);
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      jti,
+      familyId,
+      tokenHash: hashRefreshToken(refreshJwt),
+      expiresAt: new Date(Date.now() + ttlSec * 1000),
+      ipAddress: meta.ip ?? null,
+      userAgent: meta.ua ?? null,
+    },
+  });
+
+  void prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
+
+  return {
+    refreshJwt,
+    response: {
+      accessToken: accessJwt,
+      tokenType: "Bearer",
+      expiresInSec: expiresInToSeconds(CONFIG.jwt.accessExpiresIn),
+      user: userToDto({
+        ...user,
+        role: user.role ? { id: user.role.id, name: user.role.name } : null,
+      }),
+      permissions,
+    },
+  };
+}
+
+/**
+ * Outcome of a password check. A union rather than a nullable token so the
+ * controller is forced by the type checker to handle the 2FA branch — the
+ * failure mode this guards against (issuing a session for a password-only
+ * login on a 2FA account) is invisible at runtime.
+ */
+export type LoginOutcome =
+  | { kind: "session"; response: LoginResponseDto; refreshJwt: string }
+  | { kind: "2fa_required"; response: TwoFactorChallengeDto };
+
+
 export const AuthService = {
   /**
-   * Login flow:
+   * Login flow, step 1:
    *   - find user by email (or NOT, but we still bcrypt dummy hash so timing equal)
    *   - verify password (constant time even if no user)
    *   - check ACTIVE status
-   *   - create refresh token family (jti, familyId new UUIDs, hashed token in DB)
-   *   - sign access token (15 min) + refresh token (7d)
-   *   - issue Set-Cookie with refresh, return access + user JSON
+   *   - if 2FA is enabled → return a short-lived CHALLENGE instead of a session
+   *   - otherwise: create refresh token family, sign tokens, return them
+   *
+   * The order matters: the password is verified BEFORE the 2FA branch is taken,
+   * so the challenge is only ever handed to someone who already proved they
+   * know the password. Answering "2FA required" for an unknown address would
+   * itself be an account-enumeration oracle.
    */
   async login(
     dto: LoginDto,
     meta: { ip: string | undefined; ua: string | undefined },
-  ): Promise<{ response: LoginResponseDto; refreshJwt: string }> {
+  ): Promise<LoginOutcome> {
     const email = dto.email.trim().toLowerCase();
 
     const user = await prisma.user.findUnique({
       where: { email },
-      include: {
-        role: {
-          select: {
-            id: true, name: true,
-            permissions: { select: { permission: { select: { code: true } } } },
-          },
-        },
-      },
+      include: USER_WITH_ROLE_INCLUDE,
     });
 
     const passwordValid = await verifyPassword(
@@ -129,61 +253,20 @@ export const AuthService = {
       );
     }
 
-    // Flat permissions list
-    const permissions =
-      user.role?.permissions?.map((rp) => rp.permission.code).filter(Boolean) ?? [];
+    if (user.twoFactorEnabled) {
+      return {
+        kind: "2fa_required",
+        response: {
+          twoFactorRequired: true,
+          // No refresh cookie, no access token — this token is spendable only
+          // at /auth/2fa/verify, and only for 5 minutes.
+          challengeToken: signTwoFactorChallenge({ sub: user.id, jti: randomUUID() }),
+        },
+      };
+    }
 
-    const jti = randomUUID();
-    const familyId = randomUUID();
-
-    const accessPayload: Omit<AccessTokenPayload, "type" | "iat" | "exp"> = {
-      sub: user.id,
-      roleId: user.role?.id ?? "",
-      role: user.role?.name ?? "VIEWER",
-      jti,
-    };
-    const refreshPayload: Omit<RefreshTokenPayload, "type" | "iat" | "exp"> = {
-      sub: user.id,
-      jti,
-      familyId,
-    };
-    const accessJwt = signAccessToken(accessPayload);
-    const refreshJwt = signRefreshToken(refreshPayload);
-
-    const hashed = hashRefreshToken(refreshJwt);
-    const ttlSec = expiresInToSeconds(CONFIG.jwt.refreshExpiresIn);
-    const expiresAt = new Date(Date.now() + ttlSec * 1000);
-
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        jti,
-        familyId,
-        tokenHash: hashed,
-        expiresAt,
-        ipAddress: meta.ip ?? null,
-        userAgent: meta.ua ?? null,
-      },
-    });
-
-    void prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
-
-    return {
-      refreshJwt,
-      response: {
-        accessToken: accessJwt,
-        tokenType: "Bearer",
-        expiresInSec: expiresInToSeconds(CONFIG.jwt.accessExpiresIn),
-        user: userToDto({
-          ...user,
-          role: user.role ? { id: user.role.id, name: user.role.name } : null,
-        }),
-        permissions,
-      },
-    };
+    const session = await issueSession(user, meta);
+    return { kind: "session", ...session };
   },
 
   /**
@@ -404,9 +487,13 @@ export const AuthService = {
    *
    * If user EXISTS:
    *   - create PasswordResetToken row: { userId, tokenHash=sha256(rawToken), expiresAt=+15m, usedAt=NULL }
-   *   - rawToken (UUID) is embedded in reset link returned to user.
-   *   - In LOCAL DEV: console.log the clickable reset link directly in backend terminal.
-   *     (No email service configured. Production: integrate SendGrid/Resend/SES here.)
+   *   - email the reset link containing rawToken (UUID).
+   *   - If email is disabled or the send fails, print the link to the server
+   *     terminal instead, so local dev needs no SMTP credentials.
+   *
+   * NOTE: every path must stay the same shape and the same rough duration.
+   * The email send is awaited but `sendMail` never throws, so a broken SMTP
+   * host degrades to the console fallback rather than a 500.
    */
   async forgotPassword(
     dto: ForgotPasswordDto,
@@ -429,16 +516,28 @@ export const AuthService = {
         },
       });
       const resetLink = `${CONFIG.cors.frontendUrl}/reset-password?token=${rawToken}`;
-      // NO EMAIL SERVICE in local dev — print to terminal (admin can click)
-      console.log(
-        "📧 [FAKE EMAIL - LOCAL DEV ONLY] ============================================",
-      );
-      console.log(`  To: ${user.email}`);
-      console.log(`  Subject: Password reset link (expires in 15 minutes)`);
-      console.log(`  Link: ${resetLink}`);
-      console.log(
-        "======================================================================",
-      );
+
+      const delivered = await sendMail({
+        to: user.email,
+        ...renderPasswordResetEmail({
+          firstName: user.firstName,
+          resetLink,
+          expiresInMinutes: 15,
+        }),
+      });
+
+      if (!delivered) {
+        // Local-dev fallback: MAIL_ENABLED=false, or SMTP rejected the message.
+        console.log(
+          "📧 [RESET LINK - MAIL DISABLED OR FAILED] =============================",
+        );
+        console.log(`  To: ${user.email}`);
+        console.log(`  Link: ${resetLink}`);
+        console.log(
+          "======================================================================",
+        );
+      }
+
       return { ok: true, rawToken, resetLink };
     }
 
@@ -593,5 +692,211 @@ export const AuthService = {
     ]);
 
     return { ok: true };
+  },
+
+  /* ── Two-factor authentication (TOTP) ───────────────────────────────── */
+
+  /**
+   * Login step 2: exchange a challenge + code for a real session.
+   *
+   * `code` may be either a 6-digit TOTP or a recovery code. Recovery codes are
+   * consumed on use (one-time), so a stolen list is worth one login per code
+   * rather than unlimited access.
+   */
+  async verifyTwoFactorLogin(
+    dto: TwoFactorVerifyDto,
+    meta: { ip: string | undefined; ua: string | undefined },
+  ): Promise<{ response: LoginResponseDto; refreshJwt: string }> {
+    const challenge = verifyTwoFactorChallenge(dto.challengeToken);
+
+    const user = await prisma.user.findUnique({
+      where: { id: challenge.sub },
+      include: USER_WITH_ROLE_INCLUDE,
+    });
+
+    // One message for every one of these cases: unknown user, 2FA switched off
+    // between the two steps, and an unreadable secret are all "start over",
+    // and distinguishing them would leak account state to a caller who has
+    // not yet presented a valid second factor.
+    const restart = new UnauthorizedError(
+      "Your two-factor challenge is no longer valid. Please sign in again.",
+    );
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) throw restart;
+    if (user.status !== "ACTIVE") {
+      throw new ForbiddenError(
+        "This account has been disabled. Contact your administrator.",
+      );
+    }
+
+    const secret = decryptSecret(user.twoFactorSecret, CONFIG.twoFactor.encryptionKey);
+    if (!secret) throw restart;
+
+    const isTotp = await verifyTotpCode(secret, dto.code);
+    let usedRecoveryCode = false;
+
+    if (!isTotp) {
+      const hashed = hashRecoveryCode(dto.code);
+      if (user.twoFactorRecoveryCodes.includes(hashed)) {
+        usedRecoveryCode = true;
+        // Consume it atomically-ish: the `has` filter re-checks membership, so
+        // two concurrent requests cannot both spend the same code.
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { twoFactorRecoveryCodes: { set: user.twoFactorRecoveryCodes.filter((c) => c !== hashed) } },
+        });
+      } else {
+        throw new UnauthorizedError("That verification code is not valid.");
+      }
+    }
+
+    if (usedRecoveryCode) {
+      console.warn(
+        `[2FA] recovery code used for user ${user.id}; ${
+          user.twoFactorRecoveryCodes.length - 1
+        } remaining`,
+      );
+    }
+
+    return issueSession(user, meta);
+  },
+
+  /**
+   * Begin enrolment. Generates a secret and stores it ENCRYPTED but leaves
+   * `twoFactorEnabled` false.
+   *
+   * This deliberately does not switch 2FA on. A user who scans the QR code and
+   * then closes the tab must not be locked out of an account protected by a
+   * secret they never confirmed — enrolment only completes in `enableTwoFactor`,
+   * when a working code proves the secret reached their device.
+   */
+  async startTwoFactorSetup(userId: string): Promise<TwoFactorSetupResponseDto> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundError("User not found.");
+    if (user.twoFactorEnabled) {
+      throw new ConflictError(
+        "Two-factor authentication is already enabled on this account.",
+      );
+    }
+
+    // Regenerating on every call invalidates any half-finished previous attempt,
+    // so a stale QR code in an abandoned tab can never be the one that ends up
+    // enrolled.
+    const secret = createTotpSecret();
+    await prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorSecret: encryptSecret(secret, CONFIG.twoFactor.encryptionKey) },
+    });
+
+    const otpauthUrl = buildOtpAuthUri(secret, user.email);
+    const qrDataUrl = await QRCode.toDataURL(otpauthUrl, {
+      width: 220,
+      margin: 1,
+      errorCorrectionLevel: "M",
+    });
+
+    return { secret, otpauthUrl, qrDataUrl };
+  },
+
+  /**
+   * Complete enrolment: verify a live code, switch 2FA on, and issue the
+   * recovery codes.
+   *
+   * Codes are returned in plaintext EXACTLY ONCE and stored only as SHA-256
+   * hashes. There is no endpoint to read them back — the deliberate trade-off
+   * is that a user who loses both their device and their codes must have an
+   * administrator reset 2FA for them.
+   */
+  async enableTwoFactor(
+    userId: string,
+    dto: TwoFactorEnableDto,
+  ): Promise<TwoFactorEnableResponseDto> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundError("User not found.");
+    if (user.twoFactorEnabled) {
+      throw new ConflictError("Two-factor authentication is already enabled.");
+    }
+    if (!user.twoFactorSecret) {
+      throw new UnprocessableEntityError(
+        "Start two-factor setup before confirming a code.",
+      );
+    }
+
+    const secret = decryptSecret(user.twoFactorSecret, CONFIG.twoFactor.encryptionKey);
+    if (!secret) {
+      throw new UnprocessableEntityError(
+        "That setup could not be read. Please restart two-factor setup.",
+      );
+    }
+
+    if (!(await verifyTotpCode(secret, dto.code))) {
+      throw new UnprocessableEntityError(
+        "That code is not valid. Check your device's clock and try again.",
+      );
+    }
+
+    const recoveryCodes = createRecoveryCodes();
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorRecoveryCodes: recoveryCodes.map(hashRecoveryCode),
+      },
+    });
+
+    return { ok: true, recoveryCodes };
+  },
+
+  /**
+   * Turn 2FA off. Requires the account password (owner decision): a hijacked
+   * live session must not be able to quietly remove the second factor.
+   *
+   * The secret and recovery codes are wiped, so re-enabling starts from a brand
+   * new secret rather than resurrecting the old one.
+   */
+  async disableTwoFactor(
+    userId: string,
+    dto: TwoFactorDisableDto,
+  ): Promise<{ ok: true }> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundError("User not found.");
+
+    const passwordValid = await verifyPassword(dto.password, user.passwordHash);
+    if (!passwordValid) {
+      throw new UnprocessableEntityError("That password is not correct.");
+    }
+
+    if (!user.twoFactorEnabled) {
+      // Idempotent: disabling something already off is not an error worth a
+      // scary message, but the password check above still had to pass.
+      return { ok: true };
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        twoFactorEnabled: false,
+        twoFactorSecret: null,
+        twoFactorRecoveryCodes: [],
+      },
+    });
+
+    return { ok: true };
+  },
+
+  /** Drives the profile page's 2FA card. */
+  async getTwoFactorStatus(userId: string): Promise<{
+    enabled: boolean;
+    recoveryCodesRemaining: number;
+  }> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { twoFactorEnabled: true, twoFactorRecoveryCodes: true },
+    });
+    if (!user) throw new NotFoundError("User not found.");
+
+    return {
+      enabled: user.twoFactorEnabled,
+      recoveryCodesRemaining: user.twoFactorRecoveryCodes.length,
+    };
   },
 };

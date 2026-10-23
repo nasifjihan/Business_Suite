@@ -38,6 +38,37 @@ export const ChangePasswordSchema = z.object({
 });
 export type ChangePasswordDto = z.infer<typeof ChangePasswordSchema>;
 
+/* ── Two-factor authentication ──────────────────────────────────────────── */
+
+/**
+ * Second login step. `code` deliberately accepts EITHER a 6-digit TOTP or a
+ * recovery code (which contains dashes), so the user has one field and one
+ * endpoint. The service decides which one it was.
+ */
+export const TwoFactorVerifySchema = z.object({
+  challengeToken: z.string().min(1, "Two-factor challenge is required."),
+  code: z
+    .string()
+    .trim()
+    .min(6, "Enter the 6-digit code from your authenticator app.")
+    .max(32, "That code is too long."),
+});
+export type TwoFactorVerifyDto = z.infer<typeof TwoFactorVerifySchema>;
+
+/** Confirms enrolment: a real code proves the secret reached the device. */
+export const TwoFactorEnableSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code from your authenticator app."),
+});
+export type TwoFactorEnableDto = z.infer<typeof TwoFactorEnableSchema>;
+
+export const TwoFactorDisableSchema = z.object({
+  password: z.string().min(1, "Your password is required to disable 2FA."),
+});
+export type TwoFactorDisableDto = z.infer<typeof TwoFactorDisableSchema>;
+
 /** Return password strength 0..4 for meter UI (frontend reusable copy). */
 export function measurePasswordStrength(pw: string): 0 | 1 | 2 | 3 | 4 {
   let score = 0;

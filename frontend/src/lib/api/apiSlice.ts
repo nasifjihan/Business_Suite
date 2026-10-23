@@ -22,6 +22,7 @@ export const apiSlice = createApi({
   tagTypes: [
     // Global entity cache tags — modules add their own.
     "me",
+    "twoFactor",
     "Users",
     "Roles",
     "Permissions",

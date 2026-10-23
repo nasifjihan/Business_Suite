@@ -10,7 +10,15 @@ import type { Request, Response, NextFunction } from "express";
 import { AuthService } from "./services";
 import { successResponse } from "@/lib/response";
 import { buildRefreshCookieOptions, CLEAR_REFRESH_COOKIE_OPTIONS } from "@/utils/cookies";
-import type { LoginDto, ForgotPasswordDto, ResetPasswordDto, ChangePasswordDto } from "./validators";
+import type {
+  LoginDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  ChangePasswordDto,
+  TwoFactorVerifyDto,
+  TwoFactorEnableDto,
+  TwoFactorDisableDto,
+} from "./validators";
 
 const REFRESH_COOKIE_NAME = "refreshToken";
 
@@ -24,9 +32,62 @@ function extractMeta(req: Request) {
 export const AuthController = {
   async login(req: Request, res: Response, next: NextFunction) {
     try {
-      const { response, refreshJwt } = await AuthService.login(req.body, extractMeta(req));
+      const outcome = await AuthService.login(req.body, extractMeta(req));
+
+      if (outcome.kind === "2fa_required") {
+        // No refresh cookie is set here on purpose. The challenge token is the
+        // only thing this caller gets; it is worth nothing except at
+        // POST /auth/2fa/verify, which is where a session is finally created.
+        return successResponse(res, outcome.response, 200);
+      }
+
+      res.cookie(REFRESH_COOKIE_NAME, outcome.refreshJwt, buildRefreshCookieOptions());
+      return successResponse(res, outcome.response, 200);
+    } catch (e) { next(e); }
+  },
+
+  async verifyTwoFactor(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { response, refreshJwt } = await AuthService.verifyTwoFactorLogin(
+        req.body as TwoFactorVerifyDto,
+        extractMeta(req),
+      );
       res.cookie(REFRESH_COOKIE_NAME, refreshJwt, buildRefreshCookieOptions());
       return successResponse(res, response, 200);
+    } catch (e) { next(e); }
+  },
+
+  async getTwoFactorStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const status = await AuthService.getTwoFactorStatus(req.user!.id);
+      return successResponse(res, status, 200);
+    } catch (e) { next(e); }
+  },
+
+  async setupTwoFactor(req: Request, res: Response, next: NextFunction) {
+    try {
+      const setup = await AuthService.startTwoFactorSetup(req.user!.id);
+      return successResponse(res, setup, 200);
+    } catch (e) { next(e); }
+  },
+
+  async enableTwoFactor(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await AuthService.enableTwoFactor(
+        req.user!.id,
+        req.body as TwoFactorEnableDto,
+      );
+      return successResponse(res, result, 200);
+    } catch (e) { next(e); }
+  },
+
+  async disableTwoFactor(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await AuthService.disableTwoFactor(
+        req.user!.id,
+        req.body as TwoFactorDisableDto,
+      );
+      return successResponse(res, result, 200);
     } catch (e) { next(e); }
   },
 

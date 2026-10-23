@@ -23,6 +23,7 @@ import {
 } from "@/lib/api/adminEndpoints";
 import { useAppSelector } from "@/store/hooks";
 import { useHasPermission } from "@/components/auth/PermissionGate";
+import { TwoFactorCard } from "@/components/auth/TwoFactorCard";
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
 
@@ -278,22 +279,7 @@ export default function ProfilePage() {
         </section>
       </div>
 
-      <section className="rounded-2xl border border-dashed border-border bg-card/40 p-6 flex items-start gap-4">
-        <div className="rounded-lg bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 p-2 border border-slate-200/70 dark:border-slate-700/70">
-          <ShieldCheck className="w-5 h-5" />
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold">Two-factor authentication</h3>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            2FA (TOTP) will be enabled in a later phase. No configuration required today.
-          </p>
-        </div>
-        <div className="ml-auto">
-          <Button variant="outline" size="sm" disabled title="Phase 4 feature">
-            Coming soon
-          </Button>
-        </div>
-      </section>
+      <TwoFactorCard />
     </div>
   );
 }

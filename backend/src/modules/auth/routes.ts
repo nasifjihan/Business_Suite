@@ -14,6 +14,9 @@ import {
   ForgotPasswordSchema,
   ResetPasswordSchema,
   ChangePasswordSchema,
+  TwoFactorVerifySchema,
+  TwoFactorEnableSchema,
+  TwoFactorDisableSchema,
 } from "./validators";
 
 export const authRouter = Router();
@@ -32,6 +35,10 @@ export const authRouter = Router();
 
 // ── Public (no access token needed) ───────────────────────────────────────
 authRouter.post("/login",           authStrictLimiter, validate({ body: LoginSchema }),            AuthController.login);
+// Step 2 of login. Public (the caller has no session yet — that is the whole
+// point) but rate-limited like /login, because the code space is small enough
+// that an unthrottled endpoint would be brute-forceable.
+authRouter.post("/2fa/verify",      authStrictLimiter, validate({ body: TwoFactorVerifySchema }), AuthController.verifyTwoFactor);
 authRouter.post("/refresh",                                              AuthController.refresh);
 authRouter.post("/logout",                                               AuthController.logout);
 authRouter.post("/forgot-password", authStrictLimiter, validate({ body: ForgotPasswordSchema }),  AuthController.forgotPassword);
@@ -44,4 +51,22 @@ authRouter.post(
   authenticate(true),
   validate({ body: ChangePasswordSchema }),
   AuthController.changePassword
+);
+
+// ── Two-factor management (session required) ─────────────────────────────
+// These all act on the caller's own account (req.user.id), so they are not
+// admin endpoints and need no extra permission code.
+authRouter.get("/2fa/status",  authenticate(true), AuthController.getTwoFactorStatus);
+authRouter.post("/2fa/setup",  authenticate(true), AuthController.setupTwoFactor);
+authRouter.post(
+  "/2fa/enable",
+  authenticate(true),
+  validate({ body: TwoFactorEnableSchema }),
+  AuthController.enableTwoFactor
+);
+authRouter.post(
+  "/2fa/disable",
+  authenticate(true),
+  validate({ body: TwoFactorDisableSchema }),
+  AuthController.disableTwoFactor
 );

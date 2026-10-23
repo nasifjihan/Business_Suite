@@ -246,6 +246,17 @@ model User {
   avatarUrl          String?
   status             UserStatus @default(ACTIVE)
   mustChangePassword Boolean    @default(true)
+  // ── Two-factor authentication (TOTP) ──────────────────────────────
+  // `twoFactorEnabled` is the switch the login flow reads. It is flipped to
+  // true only after the user proves they can generate a code, so a half
+  // finished setup can never lock someone out.
+  // `twoFactorSecret` holds the base32 secret ENCRYPTED (AES-256-GCM), never
+  // in plaintext: a database dump must not hand over working second factors.
+  // `twoFactorRecoveryCodes` stores SHA-256 hashes, same reasoning as
+  // passwordHash — the raw codes are shown to the user exactly once.
+  twoFactorEnabled     Boolean  @default(false)
+  twoFactorSecret      String?
+  twoFactorRecoveryCodes String[] @default([])
   roleId             String?
   employeeId         String?    @unique
   lastLoginAt        DateTime?  @db.Timestamptz(6)

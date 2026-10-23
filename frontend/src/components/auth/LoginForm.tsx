@@ -5,21 +5,26 @@
  *   email    → valid email
  *   password → min 8, uppercase, lowercase, digit, special character
  *
+ * Two steps when the account has 2FA on: the password step returns a challenge
+ * (no session) and the form swaps to a code prompt, which is exchanged for the
+ * real session at POST /auth/2fa/verify.
+ *
  * Post-login redirect paths:
  *   forceChangePassword = true → /change-password (Phase 3 UI)
  *   else → /dashboard
  */
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Loader2, AlertTriangle, CheckCircle2, KeyRound, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PasswordField } from "@/components/auth/PasswordField";
-import { useLoginMutation } from "@/lib/api/authEndpoints";
+import { useLoginMutation, useVerifyTwoFactorMutation } from "@/lib/api/authEndpoints";
+import type { LoginResponseData } from "@/lib/api/authEndpoints";
 import { useAppDispatch } from "@/store/hooks";
 import { setCredentials } from "@/store/slices/authSlice";
 
@@ -42,11 +47,32 @@ type LoginFormValues = z.infer<typeof LoginSchema>;
 
 const REMEMBER_ME_KEY = "bs.auth.rememberEmail.v1";
 
+/** Shared shape for a failed mutation: RTK wraps our envelope in `data`. */
+function messageOf(error: unknown, fallback: string): string {
+  const status = (error as { status?: number | string })?.status;
+  if (status === 429 || status === "429") {
+    return "Too many attempts. Please try again in 15 minutes.";
+  }
+  return (
+    (error as { data?: { error?: { message?: string } } })?.data?.error?.message ?? fallback
+  );
+}
+
 export default function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
   const dispatch = useAppDispatch();
   const expired = search.get("expired") === "1";
+
+  /** Non-null once step 1 has returned a challenge. */
+  const [challenge, setChallenge] = useState<{ token: string; email: string } | null>(null);
+  const [code, setCode] = useState("");
+  /**
+   * Set only when a real session has been stored. Deliberately not `isSuccess`
+   * from the login mutation: that flips to true as soon as step 1 answers with
+   * a challenge, which would show "Signed in" while the code prompt is up.
+   */
+  const [signedIn, setSignedIn] = useState(false);
 
   const rememberedEmail =
     typeof window !== "undefined"
@@ -66,8 +92,34 @@ export default function LoginForm() {
   });
   const emailValue = watch("email");
 
-  const [loginTrigger, { error: rtkError, isLoading: rtkLoading, isSuccess }] =
-    useLoginMutation();
+  const [loginTrigger, { error: rtkError, isLoading: rtkLoading }] = useLoginMutation();
+  const [
+    verifyTrigger,
+    { error: verifyError, isLoading: verifyLoading },
+  ] = useVerifyTwoFactorMutation();
+
+  /** Store the session and route. Shared by both login paths. */
+  const finishLogin = useCallback(
+    (payload: LoginResponseData) => {
+      dispatch(
+        setCredentials({
+          accessToken: payload.accessToken,
+          user: payload.user,
+          permissions: payload.permissions ?? [],
+        })
+      );
+      setSignedIn(true);
+      // Let the user see success for 300ms then redirect
+      setTimeout(() => {
+        if (payload.user.mustChangePassword) {
+          router.replace("/change-password");
+        } else {
+          router.replace("/dashboard");
+        }
+      }, 300);
+    },
+    [dispatch, router]
+  );
 
   const submit = useCallback(
     async (values: LoginFormValues) => {
@@ -79,31 +131,36 @@ export default function LoginForm() {
         /* ignore */
       }
 
-      const res = await loginTrigger({
-        email: values.email.trim().toLowerCase(),
-        password: values.password,
-      });
+      const email = values.email.trim().toLowerCase();
+      const res = await loginTrigger({ email, password: values.password });
 
       if ("data" in res && res.data?.success) {
         const payload = res.data.data;
-        dispatch(
-          setCredentials({
-            accessToken: payload.accessToken,
-            user: payload.user,
-            permissions: payload.permissions ?? [],
-          })
-        );
-        // Let the user see success for 300ms then redirect
-        setTimeout(() => {
-          if (payload.user.mustChangePassword) {
-            router.replace("/change-password");
-          } else {
-            router.replace("/dashboard");
-          }
-        }, 300);
+        if ("twoFactorRequired" in payload) {
+          // No session yet — hold the challenge and swap to the code prompt.
+          setChallenge({ token: payload.challengeToken, email });
+          setCode("");
+          return;
+        }
+        finishLogin(payload);
       }
     },
-    [dispatch, loginTrigger, router]
+    [finishLogin, loginTrigger]
+  );
+
+  const submitCode = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!challenge || !code.trim()) return;
+      const res = await verifyTrigger({
+        challengeToken: challenge.token,
+        code: code.trim(),
+      });
+      if ("data" in res && res.data?.success) {
+        finishLogin(res.data.data);
+      }
+    },
+    [challenge, code, finishLogin, verifyTrigger]
   );
 
   // Stringify any RTK error shape (Unprocessable / Unauthorized) for display.
@@ -125,6 +182,86 @@ export default function LoginForm() {
       return undefined;
     }
     return undefined;
+  }
+
+  if (challenge) {
+    return (
+      <form onSubmit={submitCode} className="space-y-5" noValidate>
+        <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800 dark:border-sky-800/40 dark:bg-sky-950/30 dark:text-sky-200">
+          <KeyRound className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            Enter the 6-digit code from your authenticator app for{" "}
+            <span className="font-medium">{challenge.email}</span>. A recovery code
+            works here too.
+          </div>
+        </div>
+
+        {verifyError && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-800/40 dark:bg-rose-950/30 dark:text-rose-200"
+          >
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>{messageOf(verifyError, "That code was not accepted. Please try again.")}</div>
+          </div>
+        )}
+
+        {signedIn && (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-200"
+          >
+            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>Signed in — redirecting…</div>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <label htmlFor="totp-code" className="block text-sm font-medium text-foreground">
+            Verification code <span className="ml-0.5 text-rose-500">*</span>
+          </label>
+          <input
+            id="totp-code"
+            autoFocus
+            inputMode="text"
+            autoComplete="one-time-code"
+            placeholder="123456"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className={cn(
+              "w-full rounded-lg border bg-background px-3 py-2 text-sm shadow-sm tracking-[0.2em]",
+              "placeholder:tracking-normal placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70",
+              "border-input hover:border-ring/60"
+            )}
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={!code.trim() || verifyLoading || signedIn}
+          className={cn(
+            "inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors",
+            "hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+            "disabled:pointer-events-none disabled:opacity-60"
+          )}
+        >
+          {verifyLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+          {signedIn ? "Signed in ✓" : verifyLoading ? "Verifying…" : "Verify and sign in"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setChallenge(null);
+            setCode("");
+          }}
+          className="mx-auto flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to sign in
+        </button>
+      </form>
+    );
   }
 
   return (
@@ -158,7 +295,7 @@ export default function LoginForm() {
         </div>
       )}
 
-      {isSuccess && (
+      {signedIn && (
         <div
           role="status"
           className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-200"
@@ -246,7 +383,7 @@ export default function LoginForm() {
 
       <button
         type="submit"
-        disabled={isSubmitting || rtkLoading || isSuccess}
+        disabled={isSubmitting || rtkLoading || signedIn}
         className={cn(
           "inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors",
           "hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
@@ -256,7 +393,7 @@ export default function LoginForm() {
         {(isSubmitting || rtkLoading) && (
           <Loader2 className="h-4 w-4 animate-spin" />
         )}
-        {isSuccess ? "Signed in ✓" : rtkLoading ? "Signing in…" : "Sign in"}
+        {signedIn ? "Signed in ✓" : rtkLoading ? "Signing in…" : "Sign in"}
       </button>
 
       <p className="text-center text-xs text-muted-foreground/80">
