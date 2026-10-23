@@ -25,6 +25,35 @@ import type { NextConfig } from "next";
  */
 const nextConfig: NextConfig = {
   output: process.env.VERCEL ? undefined : "standalone",
+
+  /**
+   * Same-origin API proxy — needed whenever the API sits on a DIFFERENT site
+   * than the UI (e.g. UI on Vercel, API on Render).
+   *
+   * The refresh token is an HTTP-only cookie, and a browser only returns a
+   * cookie to the site that set it. Across sites that cookie is a THIRD-PARTY
+   * cookie, which Safari and Firefox block by default — and which Chrome is
+   * phasing out. The failure looks like a working login followed by an
+   * immediate logout: the access token lives only in Redux memory, so any
+   * reload depends on POST /auth/refresh, and that is the one request whose
+   * cookie the browser withholds. The app then redirects to
+   * /login?expired=1.
+   *
+   * Pointing the browser at our OWN origin and proxying /api/v1 through to the
+   * API makes the cookie first-party again. Pair this with
+   * NEXT_PUBLIC_API_URL=/api/v1 so the client issues relative requests.
+   *
+   * Opt-in by design: with API_PROXY_TARGET unset there is no rewrite, so
+   * `npm run dev` and the Docker/nginx image (already same-origin, and
+   * therefore already first-party) are untouched.
+   */
+  async rewrites() {
+    const target = process.env.API_PROXY_TARGET?.replace(/\/+$/, "");
+    if (!target) return [];
+    return [
+      { source: "/api/v1/:path*", destination: `${target}/api/v1/:path*` },
+    ];
+  },
 };
 
 export default nextConfig;
